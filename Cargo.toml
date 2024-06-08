@@ -8,6 +8,8 @@ edition = "2021"
 [dependencies]
 fts = "0.3"
 getopt = "1.1"
+enum-iterator = "2"
+downcast-rs = "1.2.1"
 
 [[bin]]
 name = "find"

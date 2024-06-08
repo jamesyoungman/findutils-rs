@@ -1,66 +1,30 @@
-use std::fmt::Write;
-
 use fts::fts::fts_option::Flags;
-use fts::fts::{Fts, FtsEntry, FtsError, FtsInfo};
-use getopt::Opt;
+use fts::fts::{Fts, FtsError};
+use std::collections::VecDeque;
 
-struct UsageError(String);
+mod ast;
+mod errors;
+mod execute;
+mod options;
+mod parser;
+mod predicate;
 
-enum TraversalMode {
-    P,
-    L,
-    H,
-}
-
-struct Options {
-    traversal: TraversalMode,
-}
-
-fn parse_args(args: Vec<String>) -> Result<(Options, Vec<String>), UsageError> {
-    // TODO: we need to support starting points which aren't valid UTF-8.
-    //
-    // To do that we will probably need to access the FFI interface
-    // directly, and change the type of the `args` argument and the
-    // return value, too.
-    let mut opts = getopt::Parser::new(&args, "HLP"); // E not yet implemented.
-    let mut traversal = TraversalMode::P;
-    // Process the leading options.
-    loop {
-        match opts.next() {
-            Some(Ok(opt)) => match opt {
-                Opt('P', None) => traversal = TraversalMode::P,
-                Opt('L', None) => traversal = TraversalMode::L,
-                Opt('H', None) => traversal = TraversalMode::H,
-                _ => unreachable!(),
-            },
-            None => break,
-            Some(Err(e)) => {
-                let mut msg = String::new();
-                write!(msg, "{}", e).expect("writes to string always succeeds");
-                return Err(UsageError(msg));
-            }
-        }
-    }
-    let tail: Vec<String> = args.into_iter().skip(opts.index()).collect();
-    let opts = Options { traversal };
-    Ok((opts, tail))
-}
-
-fn visit(entry: &FtsEntry) {
-    match entry.info {
-        FtsInfo::IsDirPost => {
-            // TODO: we will probably need to use this case to
-            // complete any pending executions for -execdir.
-        }
-        _ => {
-            println!("{}", entry.path.display());
-        }
-    }
-}
+use errors::UsageError;
+use execute::visit;
+use options::{parse_options, TraversalMode};
 
 fn run(args: Vec<String>) -> i32 {
-    match parse_args(args) {
-        Ok((options, mut args)) => {
+    let parser_args: VecDeque<&str> = args.iter().map(|s| s.as_str()).collect();
+    match parse_options(parser_args) {
+        Ok((options, remaining_args)) => {
+            let (start_points, program) = match parser::parse_program(remaining_args) {
+                Ok((start, program)) => (start, program),
+                Err(e) => {
+                    eprintln!("parse error: {}", e);
+                    return 1;
+                }
+            };
+
             let mut ftsflags = Flags::empty();
             // TODO: parsing the predicates will tell us if we should
             // set Flags::XDEV.  But see the (somewhat) recent
@@ -71,11 +35,12 @@ fn run(args: Vec<String>) -> i32 {
                 TraversalMode::L => Flags::LOGICAL,
                 TraversalMode::H => Flags::COMFOLLOW,
             });
-            if args.is_empty() {
-                args.push(".".to_string());
-            }
+            let start_points: Vec<String> =
+                start_points.into_iter().map(|s| s.to_string()).collect();
             let mut fts = match Fts::new(
-                args, ftsflags, None, // unordered
+                start_points,
+                ftsflags,
+                None, // unordered
             ) {
                 Ok(searcher) => searcher,
                 Err(FtsError::PathWithNull) => unreachable!("NUL character in starting point"),
@@ -83,13 +48,17 @@ fn run(args: Vec<String>) -> i32 {
                     unreachable!("fts_set apparently failed but was not called")
                 }
             };
+            let mut result = 0;
             while let Some(entry) = fts.read() {
-                visit(&entry);
+                if let Err(e) = visit(&program, &entry) {
+                    eprintln!("error: {e}");
+                    result = 1;
+                }
             }
-            0
+            result
         }
         Err(UsageError(msg)) => {
-            eprintln!("usage error: {}", msg);
+            eprintln!("usage error: {msg}");
             1
         }
     }
