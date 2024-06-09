@@ -5,13 +5,14 @@ use getopt::Opt;
 
 use super::errors::UsageError;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum TraversalMode {
     P,
     L,
     H,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Options {
     pub traversal: TraversalMode,
 }
@@ -45,4 +46,132 @@ pub fn parse_options(mut args: VecDeque<&str>) -> Result<(Options, VecDeque<&str
     args.drain(..opts.index());
     let opts = Options { traversal };
     Ok((opts, args))
+}
+
+#[cfg(test)]
+fn parse_opt_vec(mut args: Vec<&str>) -> Result<(Options, Vec<&str>), UsageError> {
+    args.insert(0, "find"); // argv[0]
+    let dq: VecDeque<&str> = args.iter().copied().collect();
+    match parse_options(dq) {
+        Err(e) => Err(e),
+        Ok((opts, args)) => {
+            let v: Vec<&str> = args.iter().copied().collect();
+            Ok((opts, v))
+        }
+    }
+}
+
+#[test]
+fn parse_otions_no_options() {
+    assert_eq!(
+        Ok((
+            Options {
+                traversal: TraversalMode::P,
+            },
+            vec![]
+        )),
+        parse_opt_vec(Vec::new())
+    );
+}
+
+#[test]
+fn parse_otions_p() {
+    assert_eq!(
+        Ok((
+            Options {
+                traversal: TraversalMode::P,
+            },
+            vec![]
+        )),
+        parse_opt_vec(vec!["-P"])
+    );
+}
+
+#[test]
+fn parse_otions_hp() {
+    assert_eq!(
+        Ok((
+            Options {
+                traversal: TraversalMode::P,
+            },
+            vec![]
+        )),
+        parse_opt_vec(vec!["-HP"])
+    );
+}
+
+#[test]
+fn parse_otions_lp() {
+    assert_eq!(
+        Ok((
+            Options {
+                traversal: TraversalMode::P,
+            },
+            vec![]
+        )),
+        parse_opt_vec(vec!["-LP"])
+    );
+}
+
+#[test]
+fn parse_otions_l() {
+    let expected = Ok((
+        Options {
+            traversal: TraversalMode::L,
+        },
+        vec![],
+    ));
+    assert_eq!(expected, parse_opt_vec(vec!["-L"]));
+    assert_eq!(expected, parse_opt_vec(vec!["-LL"]));
+    assert_eq!(expected, parse_opt_vec(vec!["-HL"]));
+    assert_eq!(expected, parse_opt_vec(vec!["-PL"]));
+    assert_eq!(expected, parse_opt_vec(vec!["-P", "-L"]));
+}
+
+#[test]
+fn parse_otions_h() {
+    assert_eq!(
+        Ok((
+            Options {
+                traversal: TraversalMode::H,
+            },
+            vec![]
+        )),
+        parse_opt_vec(vec!["-H"])
+    );
+}
+
+#[test]
+fn parse_otions_double_dash() {
+    let expected = Ok((
+        Options {
+            traversal: TraversalMode::H,
+        },
+        vec![],
+    ));
+    assert_eq!(expected, parse_opt_vec(vec!["-H"]));
+    assert_eq!(expected, parse_opt_vec(vec!["-H", "--"]));
+}
+
+#[test]
+fn parse_otions_non_options() {
+    let expected = Ok((
+        Options {
+            traversal: TraversalMode::P,
+        },
+        vec!["foo/"],
+    ));
+    assert_eq!(expected, parse_opt_vec(vec!["foo/"]));
+    assert_eq!(expected, parse_opt_vec(vec!["--", "foo/"]));
+}
+
+#[test]
+fn parse_otions_with_start_and_pred() {
+    let expected = Ok((
+        Options {
+            traversal: TraversalMode::L,
+        },
+        vec!["foo/", "-print"],
+    ));
+    assert_eq!(expected, parse_opt_vec(vec!["-L", "foo/", "-print"]));
 }

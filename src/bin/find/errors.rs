@@ -17,6 +17,7 @@ impl Display for PredicateFailure {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct UsageError(pub String);
 
 #[derive(Debug)]
