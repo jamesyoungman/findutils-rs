@@ -3,7 +3,7 @@ use std::fmt::Write;
 
 use getopt::{ErrorKind, Opt};
 
-use super::errors::UsageError;
+use findlib::UsageError;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TraversalMode {

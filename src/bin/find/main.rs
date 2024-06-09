@@ -2,15 +2,9 @@ use fts::fts::fts_option::Flags;
 use fts::fts::{Fts, FtsError};
 use std::collections::VecDeque;
 
-mod ast;
-mod errors;
-mod execute;
 mod options;
-mod parser;
-mod predicate;
 
-use errors::UsageError;
-use execute::visit;
+use findlib::{parser, visit, UsageError};
 use options::{parse_options, TraversalMode};
 
 fn run(args: Vec<String>) -> i32 {
