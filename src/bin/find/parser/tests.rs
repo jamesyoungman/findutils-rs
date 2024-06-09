@@ -57,6 +57,8 @@ fn test_parse_next_item_exhaustive_for_predicates() {
     let test_inputs: Vec<&[&str]> = vec![
         &[],
         &["-print"],
+        &["-false"],
+        &["-true"],
         &["-type", "f"],
         &["-type", "d"],
         &["-type", "l"],
@@ -298,5 +300,23 @@ fn test_parse_program_parens_before_explicit_and() {
             BinaryOperationKind::And,
             vec![type_expr("d"), print_expr()],
         )),
+    );
+}
+
+#[test]
+fn test_parse_program_true() {
+    verify_parse(
+        &["foo/", "-true"],
+        &["foo/"],
+        &Expression::Just(Box::new(TruePredicate {})),
+    );
+}
+
+#[test]
+fn test_parse_program_false() {
+    verify_parse(
+        &["foo/", "-false"],
+        &["foo/"],
+        &Expression::Just(Box::new(FalsePredicate {})),
     );
 }

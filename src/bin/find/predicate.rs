@@ -95,3 +95,37 @@ impl TypePredicate {
         Ok(TypePredicate(TypePredicateFileType::try_from(arg)?))
     }
 }
+
+#[derive(Debug)]
+pub struct TruePredicate {}
+
+impl Predicate for TruePredicate {
+    fn eval(&self, _target: &crate::ast::Target) -> Result<bool, PredicateFailure> {
+        Ok(true)
+    }
+
+    fn display_args<'a>(&self) -> Vec<Cow<'a, str>> {
+        vec![Cow::from("-true")]
+    }
+
+    fn inhibits_default_print(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug)]
+pub struct FalsePredicate {}
+
+impl Predicate for FalsePredicate {
+    fn eval(&self, _target: &crate::ast::Target) -> Result<bool, PredicateFailure> {
+        Ok(false)
+    }
+
+    fn display_args<'a>(&self) -> Vec<Cow<'a, str>> {
+        vec![Cow::from("-false")]
+    }
+
+    fn inhibits_default_print(&self) -> bool {
+        false
+    }
+}

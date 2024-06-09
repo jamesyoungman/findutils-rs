@@ -39,7 +39,9 @@ enum Arity {
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Sequence, Hash)]
 enum PredicateToken {
+    False,
     Print,
+    True,
     Type,
 }
 
@@ -48,7 +50,7 @@ impl PredicateToken {
         use Arity::*;
         use PredicateToken::*;
         match self {
-            Print => Zero,
+            False | Print | True => Zero,
             Type => One,
         }
     }
@@ -95,6 +97,8 @@ enum TokenType {
 fn tokenize_word(s: &str) -> Result<TokenType, ParseError> {
     match s {
         "-print" => Ok(TokenType::Pred(PredicateToken::Print)),
+        "-true" => Ok(TokenType::Pred(PredicateToken::True)),
+        "-false" => Ok(TokenType::Pred(PredicateToken::False)),
         "-type" => Ok(TokenType::Pred(PredicateToken::Type)),
         "(" => Ok(TokenType::Paren(Parenthesis::Left)),
         ")" => Ok(TokenType::Paren(Parenthesis::Right)),
@@ -112,6 +116,8 @@ fn build_zero_arg_predicate(
 ) -> Result<Box<dyn Predicate + Send + Sync>, ParseError> {
     match pred_token_type {
 	PredicateToken::Print => Ok(Box::new(PrintPredicate::new())),
+	PredicateToken::True => Ok(Box::new(TruePredicate{})),
+	PredicateToken::False => Ok(Box::new(FalsePredicate{})),
 	PredicateToken::Type => unreachable!(
             "build_zero_arg_predicate called on {pred_token_type:?} token {orig_token} having non-zero arity"
         ),
@@ -125,7 +131,7 @@ fn build_one_arg_predicate(
 ) -> Result<Box<dyn Predicate + Send + Sync>, ParseError> {
     match pred_token_type {
         PredicateToken::Type => Ok(Box::new(TypePredicate::new(arg)?)),
-        PredicateToken::Print => unreachable!(
+        PredicateToken::Print | PredicateToken::False | PredicateToken::True => unreachable!(
 	    "build_one_arg_predicate called on {pred_token_type:?} token {orig_token} having arity other than 1"
 	),
     }
