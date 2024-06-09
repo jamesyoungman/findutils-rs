@@ -1,4 +1,5 @@
 use fts::fts::{FtsEntry, FtsInfo};
+use std::borrow::Cow;
 
 use super::ast::{BinaryOperation, BinaryOperationKind, Expression, Predicate, Target};
 use super::errors::PredicateFailure;
@@ -21,6 +22,23 @@ impl Predicate for BinaryOperation {
     fn inhibits_default_print(&self) -> bool {
         self.children()
             .any(|action| action.inhibits_default_print())
+    }
+
+    fn display_args<'a>(&self) -> Vec<std::borrow::Cow<'a, str>> {
+        let result: Vec<Cow<'_, str>> =
+            Vec::with_capacity(self.children.len().checked_mul(2).unwrap_or(1));
+        let operator: &'static str = match self.kind() {
+            BinaryOperationKind::KeepLast => ",",
+            BinaryOperationKind::And => "-a",
+            BinaryOperationKind::Or => "-o",
+        };
+        self.children.iter().fold(result, |mut acc, child| {
+            if !acc.is_empty() {
+                acc.push(Cow::from(operator));
+            }
+            acc.extend(child.display_args());
+            acc
+        })
     }
 }
 

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt::Debug;
 
 use downcast_rs::{impl_downcast, Downcast};
@@ -9,6 +10,7 @@ pub type Target = FtsEntry;
 
 pub trait Predicate: Debug + Downcast {
     fn eval(&self, target: &Target) -> Result<bool, PredicateFailure>;
+    fn display_args<'a>(&self) -> Vec<Cow<'a, str>>;
     fn inhibits_default_print(&self) -> bool;
 }
 
@@ -16,7 +18,7 @@ impl_downcast!(Predicate);
 
 pub type BoxedPredicate = Box<dyn Predicate + Send + Sync>;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum BinaryOperationKind {
     KeepLast, // like find's comma operator
     And,
@@ -26,7 +28,7 @@ pub enum BinaryOperationKind {
 #[derive(Debug)]
 pub struct BinaryOperation {
     kind: BinaryOperationKind,
-    children: Vec<Expression>,
+    pub children: Vec<Expression>,
 }
 
 impl BinaryOperation {
@@ -64,6 +66,23 @@ impl Predicate for Expression {
             Expression::BinaryOp(op) => op.inhibits_default_print(),
             Expression::Not(expr) => expr.inhibits_default_print(),
             Expression::Just(expr) => expr.inhibits_default_print(),
+        }
+    }
+
+    fn display_args<'a>(&self) -> Vec<Cow<'a, str>> {
+        match self {
+            Expression::BinaryOp(op) => {
+                let mut result: Vec<Cow<'_, str>> = vec![Cow::from("(")];
+                result.extend(op.display_args());
+                result.push(Cow::from(")"));
+                result
+            }
+            Expression::Not(expr) => {
+                let mut result = vec![Cow::from("!")];
+                result.extend(expr.display_args());
+                result
+            }
+            Expression::Just(pred) => pred.display_args(),
         }
     }
 }

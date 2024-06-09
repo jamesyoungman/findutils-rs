@@ -1,5 +1,6 @@
 #[cfg(test)]
-use std::collections::HashSet;
+mod tests;
+
 use std::collections::VecDeque;
 use std::fmt::Display;
 
@@ -9,8 +10,6 @@ use super::ast::{BinaryOperation, BinaryOperationKind, Expression, Predicate};
 use super::errors::ParseError;
 use super::predicate::*;
 
-#[cfg(test)]
-use enum_iterator::all;
 use enum_iterator::Sequence;
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy, PartialOrd, Ord)]
@@ -20,14 +19,6 @@ enum Precedence {
     And,
     Not,
     Paren, // highest
-}
-
-#[test]
-fn test_precedence_comparison() {
-    assert!(Precedence::Comma < Precedence::Or);
-    assert!(Precedence::Or < Precedence::And);
-    assert!(Precedence::And < Precedence::Not);
-    assert!(Precedence::Not < Precedence::Paren);
 }
 
 fn binary_operation_precedence(op: BinaryOperationKind) -> Precedence {
@@ -114,12 +105,6 @@ fn tokenize_word(s: &str) -> Result<TokenType, ParseError> {
         "," => Ok(TokenType::Op(OperatorToken::Comma)),
         _ => Err(ParseError(format!("unknown token {s}"))),
     }
-}
-
-#[test]
-fn test_tokenize_word() {
-    let toks: Result<Vec<TokenType>, ParseError> = [].into_iter().map(tokenize_word).collect();
-    assert_eq!(toks.expect("tokens are valid"), []);
 }
 
 fn build_zero_arg_predicate(
@@ -226,90 +211,6 @@ fn parse_single_predicate(
         Ok(None) => Ok(None),
         other => {
             panic!("input {input:?} should have been parsed as predicates only, but appears to contain {other:?}");
-        }
-    }
-}
-
-#[test]
-fn test_parse_next_item_exhaustive_for_predicates() {
-    fn do_valid_parse(input: &[&str]) -> Option<(PredicateToken, BoxedPredicate)> {
-        match parse_single_predicate(input) {
-            Err(e) => {
-                panic!("input {input:?} should be valid but was not: {e}");
-            }
-            Ok(out) => out,
-        }
-    }
-    let all_tokens: HashSet<PredicateToken> = all::<PredicateToken>().collect();
-    let mut tokens_seen: HashSet<PredicateToken> = HashSet::new();
-    let test_inputs: Vec<&[&str]> = vec![
-        &[],
-        &["-print"],
-        &["-type", "f"],
-        &["-type", "d"],
-        &["-type", "l"],
-        &["-type", "b"],
-        &["-type", "c"],
-        &["-type", "p"],
-        &["-type", "s"],
-        &["-type", "D"],
-    ];
-    for fragment in test_inputs.iter() {
-        match do_valid_parse(fragment) {
-            Some((pred_token_type, _predicate)) => {
-                tokens_seen.insert(pred_token_type);
-            }
-            None => (),
-        }
-    }
-
-    let missing: HashSet<PredicateToken> = all_tokens.difference(&tokens_seen).copied().collect();
-    if !missing.is_empty() {
-        panic!("unit test does not cover some token types: {missing:?}");
-    }
-}
-
-#[test]
-fn test_parse_type_invalid() {
-    let test_inputs: Vec<Vec<&str>> = vec![
-        vec!["-type"],       // invalid because missing argument
-        vec!["-typeZ", "f"], // invalid because not actually -type
-        vec!["-type", "q"],  // invalid argument
-    ];
-    for input in test_inputs {
-        match parse_single_predicate(input.as_slice()) {
-            Err(_) => (), // as excpted
-            Ok(out) => {
-                panic!("parsed invalid input {input:?} but unexpectedly got valid result {out:?}");
-            }
-        }
-    }
-}
-
-#[test]
-fn test_parse_type_valid() {
-    let test_inputs: Vec<(&str, TypePredicateFileType)> = vec![
-        ("b", TypePredicateFileType::BlockDevice),
-        ("c", TypePredicateFileType::CharacterDevice),
-        ("d", TypePredicateFileType::Directory),
-        ("p", TypePredicateFileType::NamedPipe),
-        ("f", TypePredicateFileType::RegularFile),
-        ("l", TypePredicateFileType::SymbolicLink),
-        ("s", TypePredicateFileType::Socket),
-        ("D", TypePredicateFileType::Door),
-    ];
-    for (letter, _expected_indicator) in test_inputs {
-        let input = &["-type", letter];
-        match parse_single_predicate(input) {
-            Err(e) => {
-                panic!("failed to parse {input:?}: {e}");
-            }
-            Ok(Some((_, _boxed_predicate))) => {
-                // TODO: verify the value of boxed_predicate.
-            }
-            other => {
-                panic!("parsed valid input {input:?} got unexpected result {other:?}");
-            }
         }
     }
 }
