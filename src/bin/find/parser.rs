@@ -17,8 +17,7 @@ enum Precedence {
     Comma, // lowest
     Or,
     And,
-    Not,
-    Paren, // highest
+    Not, // highest
 }
 
 fn binary_operation_precedence(op: BinaryOperationKind) -> Precedence {
@@ -142,6 +141,16 @@ enum PredOrSyntax {
     Paren(Parenthesis),
 }
 
+impl PredOrSyntax {
+    fn maybe_get_paren(&self) -> Option<&Parenthesis> {
+        if let PredOrSyntax::Paren(paren_type) = self {
+            Some(paren_type)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug)]
 enum ParsedItem<'a> {
     StartPoint(&'a str),
@@ -224,8 +233,18 @@ impl ParseInput {
         ParseInput { terminals }
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = &PredOrSyntax> {
+        self.terminals.iter()
+    }
+
     pub fn shift(&mut self) -> Option<PredOrSyntax> {
         self.terminals.pop_front()
+    }
+
+    pub fn shift_many(&mut self, n: usize) -> ParseInput {
+        ParseInput {
+            terminals: self.terminals.drain(0..n).collect(),
+        }
     }
 
     pub fn unshift(&mut self, item: PredOrSyntax) {
@@ -258,8 +277,52 @@ impl ParseInput {
     }
 }
 
-fn get_paren_expression(_input: &mut ParseInput) -> Result<Option<Expression>, ParseError> {
-    todo!("implement get_paren_expression")
+fn balancing_paren_position(input: &ParseInput) -> Option<usize> {
+    let mut open_count = 1usize;
+    for (i, item) in input.iter().enumerate() {
+        match item.maybe_get_paren() {
+            Some(Parenthesis::Left) => {
+                open_count += 1;
+            }
+            Some(Parenthesis::Right) => {
+                open_count -= 1;
+                if open_count == 0 {
+                    return Some(i);
+                }
+            }
+            None => (), // not interesting
+        }
+    }
+    None
+}
+
+/// Returns a parenthesis expression.  The left paren has already been consumed.
+fn get_paren_expression(input: &mut ParseInput) -> Result<Expression, ParseError> {
+    match balancing_paren_position(input) {
+        Some(n) => {
+            // Extract the whole interior of the parenthesised expression.
+            let mut head: ParseInput = input.shift_many(n);
+            // The first unshifted token must be the balancing
+            // parenthesis.  Check it's actually there.
+            match input.shift() {
+                Some(item) => match item.maybe_get_paren() {
+                    Some(Parenthesis::Right) => (),
+                    other => {
+                        panic!("expected that balancing_paren_position would identify the position of a right parenthesis, but instead we saw {other:?}");
+                    }
+                },
+                None => {
+                    panic!("balancing_paren_position consumed the whole input without generating an error, but should have returned an error result instead.");
+                }
+            }
+            match get_expression(&mut head, None) {
+                Ok(Some(expr)) => Ok(expr),
+                Ok(None) => Err(ParseError("empty parentheses".to_string())),
+                Err(e) => Err(e),
+            }
+        }
+        None => Err(ParseError("missing right parenthesis ')'".to_string())),
+    }
 }
 
 fn get_expression(
@@ -295,7 +358,9 @@ fn get_expression(
                 }
             }
         }
-        Some(PredOrSyntax::Paren(Parenthesis::Left)) => return get_paren_expression(input),
+        Some(PredOrSyntax::Paren(Parenthesis::Left)) => {
+            return get_paren_expression(input).map(|expr| Some(expr));
+        }
         Some(PredOrSyntax::Paren(Parenthesis::Right)) => {
             return Err(ParseError(
                 "found unexpected closing parenthesis at the beginning of an expression"

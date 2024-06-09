@@ -10,7 +10,6 @@ fn test_precedence_comparison() {
     assert!(Precedence::Comma < Precedence::Or);
     assert!(Precedence::Or < Precedence::And);
     assert!(Precedence::And < Precedence::Not);
-    assert!(Precedence::Not < Precedence::Paren);
 }
 
 #[test]
@@ -150,6 +149,13 @@ fn print_expr() -> Expression {
     Expression::Just(Box::new(PrintPredicate::new()))
 }
 
+#[cfg(test)]
+fn type_expr(arg: &str) -> Expression {
+    Expression::Just(Box::new(
+        TypePredicate::new(arg).expect("argument to TypePredicate::new() should be valid"),
+    ))
+}
+
 #[test]
 fn test_parse_program_empty() {
     verify_parse(
@@ -219,12 +225,7 @@ fn test_parse_program_binary_op_or_asymmetric() {
         &["foo/"],
         &Expression::BinaryOp(BinaryOperation::new(
             BinaryOperationKind::Or,
-            vec![
-                Expression::Just(Box::new(
-                    TypePredicate::new("f").expect("f is valid argument to -type"),
-                )),
-                print_expr(),
-            ],
+            vec![type_expr("f"), print_expr()],
         )),
     );
 }
@@ -246,6 +247,56 @@ fn test_parse_program_binary_op_precedence() {
                     vec![print_expr(), print_expr()],
                 )),
             ],
+        )),
+    );
+}
+
+#[test]
+fn test_parse_program_parens_trivial_case() {
+    verify_parse(&["foo/", "(", "-print", ")"], &["foo/"], &print_expr());
+}
+
+#[test]
+fn test_parse_program_parens_nested() {
+    verify_parse(
+        &["foo/", "(", "(", "-print", ")", ")"],
+        &["foo/"],
+        &print_expr(),
+    );
+}
+
+#[test]
+fn test_parse_program_parens_non_trivial_case() {
+    verify_parse(
+        &["foo/", "(", "-print", "-print", ")"],
+        &["foo/"],
+        &Expression::BinaryOp(BinaryOperation::new(
+            BinaryOperationKind::And,
+            vec![print_expr(), print_expr()],
+        )),
+    );
+}
+
+#[test]
+fn test_parse_program_parens_before_implicit_and() {
+    verify_parse(
+        &["foo/", "-type", "d", "(", "-print", ")"],
+        &["foo/"],
+        &Expression::BinaryOp(BinaryOperation::new(
+            BinaryOperationKind::And,
+            vec![type_expr("d"), print_expr()],
+        )),
+    );
+}
+
+#[test]
+fn test_parse_program_parens_before_explicit_and() {
+    verify_parse(
+        &["foo/", "-type", "d", "-a", "(", "-print", ")"],
+        &["foo/"],
+        &Expression::BinaryOp(BinaryOperation::new(
+            BinaryOperationKind::And,
+            vec![type_expr("d"), print_expr()],
         )),
     );
 }
