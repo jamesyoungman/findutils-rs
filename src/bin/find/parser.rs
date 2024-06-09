@@ -1,12 +1,17 @@
 #[cfg(test)]
 use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::fmt::Display;
 
-use super::ast::{BoxedPredicate, Expression, Predicate};
+#[cfg(test)]
+use super::ast::BoxedPredicate;
+use super::ast::{BinaryOperation, BinaryOperationKind, Expression, Predicate};
 use super::errors::ParseError;
 use super::predicate::*;
 
-use enum_iterator::{all, Sequence};
+#[cfg(test)]
+use enum_iterator::all;
+use enum_iterator::Sequence;
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy, PartialOrd, Ord)]
 enum Precedence {
@@ -25,6 +30,14 @@ fn test_precedence_comparison() {
     assert!(Precedence::Not < Precedence::Paren);
 }
 
+fn binary_operation_precedence(op: BinaryOperationKind) -> Precedence {
+    match op {
+        BinaryOperationKind::And => Precedence::And,
+        BinaryOperationKind::Or => Precedence::Or,
+        BinaryOperationKind::KeepLast => Precedence::Comma,
+    }
+}
+
 /// We could represent Arity as u32 but we want to structure parts of
 /// the code so that we can be sure that all possible arity values are
 /// covered.  Therefore we make it an enum.
@@ -35,110 +48,113 @@ enum Arity {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Sequence, Hash)]
-enum TokenType {
+enum PredicateToken {
     Print,
     Type,
-    Lparen,
-    Rparen,
+}
+
+impl PredicateToken {
+    pub fn arity(&self) -> Arity {
+        use Arity::*;
+        use PredicateToken::*;
+        match self {
+            Print => Zero,
+            Type => One,
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Sequence, Hash)]
+enum OperatorToken {
     And,
     Or,
     Not,
     Comma,
 }
 
-impl TokenType {
-    fn arity(&self) -> Arity {
-        use Arity::*;
-        use TokenType::*;
-        match self {
-            Print => Zero,
-            Type => One,
-            Lparen | Rparen | And | Or | Not | Comma => Zero,
-        }
+impl Display for OperatorToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use OperatorToken::*;
+        f.write_str(
+            // While we accept both -and and -a, we use the POSIX
+            // compliant representation for output.  Similarly for
+            // -o/-or, !/-not.
+            match self {
+                And => "-a",
+                Or => "-o",
+                Not => "!",
+                Comma => ",",
+            },
+        )
     }
+}
 
-    fn precedence(&self) -> Option<Precedence> {
-        use TokenType::*;
-        match self {
-            Lparen | Rparen => Some(Precedence::Paren),
-            Not => Some(Precedence::Not),
-            And => Some(Precedence::And),
-            Or => Some(Precedence::Or),
-            Comma => Some(Precedence::Comma),
-            _ => None,
-        }
-    }
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Sequence, Hash)]
+enum Parenthesis {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Sequence, Hash)]
+enum TokenType {
+    Pred(PredicateToken),
+    Op(OperatorToken),
+    Paren(Parenthesis),
 }
 
 fn tokenize_word(s: &str) -> Result<TokenType, ParseError> {
-    use TokenType::*;
-    let tok = match s {
-        "-print" => Print,
-        "-type" => Type,
-        "(" => Lparen,
-        ")" => Rparen,
-        "-not" => Not,
-        "-and" | "-a" => And,
-        "-or" | "-o" => Or,
-        "," => Comma,
-        _ => {
-            return Err(ParseError(format!("unknown token {s}")));
-        }
-    };
-    Ok(tok)
-}
-
-fn expect1<'a>(predicate: &str, mut v: Vec<&'a str>) -> &'a str {
-    match v.pop() {
-        Some(s) => {
-            if v.is_empty() {
-                s
-            } else {
-                unreachable!("predicate {predicate} was parsed with too many arguments")
-            }
-        }
-        None => {
-            unreachable!("predicate {predicate} was parsed with no arguments")
-        }
+    match s {
+        "-print" => Ok(TokenType::Pred(PredicateToken::Print)),
+        "-type" => Ok(TokenType::Pred(PredicateToken::Type)),
+        "(" => Ok(TokenType::Paren(Parenthesis::Left)),
+        ")" => Ok(TokenType::Paren(Parenthesis::Right)),
+        "!" | "-not" => Ok(TokenType::Op(OperatorToken::Not)),
+        "-and" | "-a" => Ok(TokenType::Op(OperatorToken::And)),
+        "-or" | "-o" => Ok(TokenType::Op(OperatorToken::Or)),
+        "," => Ok(TokenType::Op(OperatorToken::Comma)),
+        _ => Err(ParseError(format!("unknown token {s}"))),
     }
 }
 
+#[test]
+fn test_tokenize_word() {
+    let toks: Result<Vec<TokenType>, ParseError> = [].into_iter().map(tokenize_word).collect();
+    assert_eq!(toks.expect("tokens are valid"), []);
+}
+
 fn build_zero_arg_predicate(
-    token_type: TokenType,
+    pred_token_type: PredicateToken,
     orig_token: &str,
 ) -> Result<Box<dyn Predicate + Send + Sync>, ParseError> {
-    use TokenType::*;
-    match token_type {
-        Print => Ok(Box::new(PrintPredicate::new())),
-        Type => unreachable!(
-            "build_zero_arg_predicate called on {token_type:?} token {orig_token} having non-zero arity"
+    match pred_token_type {
+	PredicateToken::Print => Ok(Box::new(PrintPredicate::new())),
+	PredicateToken::Type => unreachable!(
+            "build_zero_arg_predicate called on {pred_token_type:?} token {orig_token} having non-zero arity"
         ),
-	syntax @ (Lparen | Rparen | And | Or | Not | Comma) => unreachable!("build_zero_arg_predicate called on {syntax:?}"),
     }
 }
 
 fn build_one_arg_predicate(
-    token_type: TokenType,
+    pred_token_type: PredicateToken,
     orig_token: &str,
     arg: &str,
 ) -> Result<Box<dyn Predicate + Send + Sync>, ParseError> {
-    use TokenType::*;
-    match token_type {
-        Type => Ok(Box::new(TypePredicate::new(arg)?)),
-        Print => unreachable!(
-            "build_one_arg_predicate called on {token_type:?} token {orig_token} having arity other than 1"
-        ),
-	syntax @ (Lparen | Rparen | And | Or | Not | Comma) => unreachable!("build_one_arg_predicate called on {syntax:?}"),
+    match pred_token_type {
+        PredicateToken::Type => Ok(Box::new(TypePredicate::new(arg)?)),
+        PredicateToken::Print => unreachable!(
+	    "build_one_arg_predicate called on {pred_token_type:?} token {orig_token} having arity other than 1"
+	),
     }
 }
 
 #[derive(Debug)]
 enum PredOrSyntax {
     Predicate {
-        token_type: TokenType,
+        token_type: PredicateToken, // used only in tests
         predicate: Box<dyn Predicate + Send + Sync>,
     },
-    Syntax(TokenType),
+    Op(OperatorToken),
+    Paren(Parenthesis),
 }
 
 #[derive(Debug)]
@@ -162,24 +178,23 @@ fn parse_next_item<'a>(
                     Ok(Some(ParsedItem::StartPoint(orig_token)))
                 }
             }
-            Ok(element @ (TokenType::Lparen | TokenType::Rparen)) => {
-                Ok(Some(ParsedItem::Program(PredOrSyntax::Syntax(element))))
-            }
-            Ok(token_type) => match token_type.arity() {
+            Ok(TokenType::Pred(pred_tok)) => match pred_tok.arity() {
                 Arity::Zero => Ok(Some(ParsedItem::Program(PredOrSyntax::Predicate {
-                    token_type,
-                    predicate: build_zero_arg_predicate(token_type, orig_token)?,
+                    token_type: pred_tok,
+                    predicate: build_zero_arg_predicate(pred_tok, orig_token)?,
                 }))),
                 Arity::One => match input.pop_front() {
                     Some(arg) => Ok(Some(ParsedItem::Program(PredOrSyntax::Predicate {
-                        token_type,
-                        predicate: build_one_arg_predicate(token_type, orig_token, arg)?,
+                        token_type: pred_tok,
+                        predicate: build_one_arg_predicate(pred_tok, orig_token, arg)?,
                     }))),
                     None => Err(ParseError(format!(
                         "predicate {orig_token} takes an argument but one was not specified"
                     ))),
                 },
             },
+            Ok(TokenType::Op(op)) => Ok(Some(ParsedItem::Program(PredOrSyntax::Op(op)))),
+            Ok(TokenType::Paren(side)) => Ok(Some(ParsedItem::Program(PredOrSyntax::Paren(side)))),
         }
     } else {
         Ok(None) // end of input
@@ -189,17 +204,14 @@ fn parse_next_item<'a>(
 #[cfg(test)]
 fn parse_single_predicate(
     input: &[&str],
-) -> Result<Option<(TokenType, Box<dyn Predicate + Send + Sync>)>, ParseError> {
+) -> Result<Option<(PredicateToken, Box<dyn Predicate + Send + Sync>)>, ParseError> {
     let mut queue: VecDeque<&str> = input.into_iter().copied().collect();
     match parse_next_item(&mut queue, true) {
         Err(e) => Err(e),
-        Ok(Some(ParsedItem::StartPoint(top))) => {
-            panic!("input {input:?} should have been parsed as a predicate, but appears to be a start point");
-        }
-        Ok(Some(ParsedItem::Predicate {
+        Ok(Some(ParsedItem::Program(PredOrSyntax::Predicate {
             token_type,
             predicate,
-        })) => {
+        }))) => {
             let result = Some((token_type, predicate));
             // Check that we have exhausted the input.
             match parse_next_item(&mut queue, true) {
@@ -212,12 +224,15 @@ fn parse_single_predicate(
             Ok(result)
         }
         Ok(None) => Ok(None),
+        other => {
+            panic!("input {input:?} should have been parsed as predicates only, but appears to contain {other:?}");
+        }
     }
 }
 
 #[test]
-fn test_parse_next_item_exhaustive() {
-    fn do_valid_parse(input: &[&str]) -> Option<(TokenType, BoxedPredicate)> {
+fn test_parse_next_item_exhaustive_for_predicates() {
+    fn do_valid_parse(input: &[&str]) -> Option<(PredicateToken, BoxedPredicate)> {
         match parse_single_predicate(input) {
             Err(e) => {
                 panic!("input {input:?} should be valid but was not: {e}");
@@ -225,8 +240,8 @@ fn test_parse_next_item_exhaustive() {
             Ok(out) => out,
         }
     }
-    let mut all_tokens: HashSet<TokenType> = all::<TokenType>().collect();
-    let mut tokens_seen: HashSet<TokenType> = HashSet::new();
+    let all_tokens: HashSet<PredicateToken> = all::<PredicateToken>().collect();
+    let mut tokens_seen: HashSet<PredicateToken> = HashSet::new();
     let test_inputs: Vec<&[&str]> = vec![
         &[],
         &["-print"],
@@ -241,14 +256,14 @@ fn test_parse_next_item_exhaustive() {
     ];
     for fragment in test_inputs.iter() {
         match do_valid_parse(fragment) {
-            Some((token_type, _predicate)) => {
-                tokens_seen.insert(token_type);
+            Some((pred_token_type, _predicate)) => {
+                tokens_seen.insert(pred_token_type);
             }
             None => (),
         }
     }
 
-    let missing: HashSet<TokenType> = all_tokens.difference(&tokens_seen).copied().collect();
+    let missing: HashSet<PredicateToken> = all_tokens.difference(&tokens_seen).copied().collect();
     if !missing.is_empty() {
         panic!("unit test does not cover some token types: {missing:?}");
     }
@@ -263,7 +278,7 @@ fn test_parse_type_invalid() {
     ];
     for input in test_inputs {
         match parse_single_predicate(input.as_slice()) {
-            Err(e) => (),
+            Err(_) => (), // as excpted
             Ok(out) => {
                 panic!("parsed invalid input {input:?} but unexpectedly got valid result {out:?}");
             }
@@ -283,13 +298,13 @@ fn test_parse_type_valid() {
         ("s", TypePredicateFileType::Socket),
         ("D", TypePredicateFileType::Door),
     ];
-    for (letter, expected_indicator) in test_inputs {
+    for (letter, _expected_indicator) in test_inputs {
         let input = &["-type", letter];
         match parse_single_predicate(input) {
             Err(e) => {
                 panic!("failed to parse {input:?}: {e}");
             }
-            Ok(Some((_, boxed_predicate))) => {
+            Ok(Some((_, _boxed_predicate))) => {
                 // TODO: verify the value of boxed_predicate.
             }
             other => {
@@ -299,8 +314,146 @@ fn test_parse_type_valid() {
     }
 }
 
-fn build_program(predicates: VecDeque<PredOrSyntax>) -> Result<Option<Expression>, ParseError> {
-    todo!("write build_program")
+struct ParseInput {
+    terminals: VecDeque<PredOrSyntax>,
+}
+
+impl ParseInput {
+    pub fn new(terminals: VecDeque<PredOrSyntax>) -> ParseInput {
+        ParseInput { terminals }
+    }
+
+    pub fn shift(&mut self) -> Option<PredOrSyntax> {
+        self.terminals.pop_front()
+    }
+
+    pub fn unshift(&mut self, item: PredOrSyntax) {
+        self.terminals.push_front(item)
+    }
+
+    pub fn shift_binary_operation(&mut self) -> Option<(bool, BinaryOperationKind)> {
+        self.shift().map(|token| match token {
+            PredOrSyntax::Op(OperatorToken::And) => (true, BinaryOperationKind::And),
+            PredOrSyntax::Op(OperatorToken::Or) => (true, BinaryOperationKind::Or),
+            PredOrSyntax::Op(OperatorToken::Comma) => (true, BinaryOperationKind::KeepLast),
+            other => {
+                // The next token wasn't an operator (e.g. it was (,
+                // -print, etc.).  Unshift the next token and return
+                // an implicit "and" so that (as POSIX requires)
+                // "-type f -name foo" means the same as "-type f -a
+                // -name foo".
+                self.unshift(other);
+                (false, BinaryOperationKind::And)
+            }
+        })
+    }
+
+    pub fn unshift_binary_operation(&mut self, op: BinaryOperationKind) {
+        self.unshift(match op {
+            BinaryOperationKind::And => PredOrSyntax::Op(OperatorToken::And),
+            BinaryOperationKind::Or => PredOrSyntax::Op(OperatorToken::Or),
+            BinaryOperationKind::KeepLast => PredOrSyntax::Op(OperatorToken::Comma),
+        });
+    }
+}
+
+fn get_paren_expression(_input: &mut ParseInput) -> Result<Option<Expression>, ParseError> {
+    todo!("implement get_paren_expression")
+}
+
+fn get_expression(
+    input: &mut ParseInput,
+    pred_bound: Option<Precedence>,
+) -> Result<Option<Expression>, ParseError> {
+    // Shift a token from the input and form an expression (which may
+    // end up as the left-hand-side of a binary expressino, or may be
+    // the only expression).
+    let left: Expression = match input.shift() {
+        None => {
+            return Ok(None);
+        }
+        Some(PredOrSyntax::Op(op)) => {
+            match op {
+                OperatorToken::And | OperatorToken::Or | OperatorToken::Comma => {
+                    return Err(ParseError(format!(
+                        "unexpected operator token {op}, expected a predicate"
+                    )));
+                }
+                OperatorToken::Not => {
+                    // This could be "! -type d" or "! ( ... "
+                    // so we need to parse the next thing as an
+                    // expression, not simply a token.
+                    match get_expression(input, Some(Precedence::Not))? {
+                        Some(inverted) => Expression::Not(Box::new(inverted)),
+                        None => {
+                            return Err(ParseError(
+                                "incomplete expression: '!' at end of expression".to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Some(PredOrSyntax::Paren(Parenthesis::Left)) => return get_paren_expression(input),
+        Some(PredOrSyntax::Paren(Parenthesis::Right)) => {
+            return Err(ParseError(
+                "found unexpected closing parenthesis at the beginning of an expression"
+                    .to_string(),
+            ))
+        }
+        Some(PredOrSyntax::Predicate {
+            token_type: _,
+            predicate,
+        }) => Expression::Just(predicate),
+    };
+
+    // Shift a token to identify whether we're looking at a binary
+    // expression.   Use the precdence bound to ensure that
+    // "x -a y -o b" is parsed as "( x -a y ) -o b".
+    let (explicit, op) = match input.shift_binary_operation() {
+        Some((explicit, op)) => {
+            if let Some(bound) = pred_bound {
+                if binary_operation_precedence(op) < bound {
+                    if !explicit {
+                        input.unshift_binary_operation(op);
+                    }
+                    (explicit, None)
+                } else {
+                    (explicit, Some(op))
+                }
+            } else {
+                (explicit, Some(op))
+            }
+        }
+        None => (false, None),
+    };
+
+    if let Some(op) = op {
+        // If we have a binary expression, parse the expression
+        // forming the right-hand-side.
+        if let Some(right) = get_expression(input, Some(binary_operation_precedence(op)))? {
+            Ok(Some(Expression::BinaryOp(BinaryOperation::new(
+                op,
+                vec![left, right],
+            ))))
+        } else {
+            // We had a binary operation but no expression on its
+            // right-hand-side.  This is a syntax error.
+            assert!(explicit);
+            let symbol = match op {
+                BinaryOperationKind::And => "-a",
+                BinaryOperationKind::Or => "-o",
+                BinaryOperationKind::KeepLast => ",",
+            };
+            Err(ParseError(format!(
+                "binary operator '{symbol}' has no right-hand operand"
+            )))
+        }
+    } else {
+        // There was no explicit or implicit operator and thus the
+        // "left" expression is in fact the only expression.
+        Ok(Some(left))
+    }
 }
 
 fn make_default_print() -> Expression {
@@ -319,8 +472,11 @@ pub fn parse_program(mut input: VecDeque<&str>) -> Result<(Vec<&str>, Expression
                 if starting_points.is_empty() {
                     starting_points.push(".");
                 }
-                let expr = build_program(predicates)?.unwrap_or_else(make_default_print);
-                return Ok((starting_points, expr));
+                let mut unparsed_program = ParseInput::new(predicates);
+                // TODO: make get_expression take ownership of the input.
+                let program: Expression =
+                    get_expression(&mut unparsed_program, None)?.unwrap_or_else(make_default_print);
+                return Ok((starting_points, program));
             }
             Ok(Some(ParsedItem::StartPoint(top))) => {
                 starting_points.push(top);
