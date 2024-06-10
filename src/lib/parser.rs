@@ -3,6 +3,7 @@ mod tests;
 
 use std::collections::VecDeque;
 use std::fmt::Display;
+use std::num::NonZeroUsize;
 
 #[cfg(test)]
 use super::ast::BoxedPredicate;
@@ -25,6 +26,15 @@ fn binary_operation_precedence(op: BinaryOperationKind) -> Precedence {
         BinaryOperationKind::And => Precedence::And,
         BinaryOperationKind::Or => Precedence::Or,
         BinaryOperationKind::KeepLast => Precedence::Comma,
+    }
+}
+
+fn operator_precedence(tok: &OperatorToken) -> Precedence {
+    match tok {
+        OperatorToken::And => Precedence::And,
+        OperatorToken::Or => Precedence::Or,
+        OperatorToken::Not => Precedence::Not,
+        OperatorToken::Comma => Precedence::Comma,
     }
 }
 
@@ -230,104 +240,150 @@ fn parse_single_predicate(
     }
 }
 
+#[derive(Debug)]
+struct ParseInputItem {
+    terminal: PredOrSyntax,
+    balancing_paren_dist: Option<NonZeroUsize>,
+}
+
+impl ParseInputItem {
+    fn terminal(&self) -> &PredOrSyntax {
+        &self.terminal
+    }
+
+    fn take_terminal(self) -> PredOrSyntax {
+        self.terminal
+    }
+
+    fn balancing_paren_dist(&self) -> Option<NonZeroUsize> {
+        self.balancing_paren_dist
+    }
+}
+
+#[derive(Debug)]
 struct ParseInput {
-    terminals: VecDeque<PredOrSyntax>,
+    items: VecDeque<ParseInputItem>,
 }
 
 impl ParseInput {
-    pub fn new(terminals: VecDeque<PredOrSyntax>) -> ParseInput {
-        ParseInput { terminals }
+    pub fn new(terminals: VecDeque<PredOrSyntax>) -> Result<ParseInput, ParseError> {
+        let paren_offsets = ParseInput::find_matching_parens(&terminals)?;
+        Ok(ParseInput {
+            items: terminals
+                .into_iter()
+                .zip(paren_offsets.into_iter())
+                .map(|(terminal, offset)| ParseInputItem {
+                    terminal,
+                    balancing_paren_dist: offset,
+                })
+                .collect(),
+        })
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &PredOrSyntax> {
-        self.terminals.iter()
+    pub fn find_matching_parens(
+        input: &VecDeque<PredOrSyntax>,
+    ) -> Result<Vec<Option<NonZeroUsize>>, ParseError> {
+        let mut result = Vec::with_capacity(input.len());
+        result.resize(input.len(), None);
+        let mut last_pos_of_lparen_at_depth: Vec<usize> = Vec::new();
+        for (i, terminal) in input.iter().enumerate() {
+            match terminal.maybe_get_paren() {
+                None => (),
+                Some(Parenthesis::Left) => {
+                    last_pos_of_lparen_at_depth.push(i);
+                }
+                Some(Parenthesis::Right) => match last_pos_of_lparen_at_depth.pop() {
+                    Some(leftpos) => {
+                        let distance = i - leftpos;
+                        assert!(result[leftpos].is_none());
+                        result[leftpos] = NonZeroUsize::new(distance);
+                    }
+                    None => {
+                        return Err(ParseError("unbalances parentheses".to_string()));
+                    }
+                },
+            }
+        }
+        Ok(result)
     }
 
-    pub fn shift(&mut self) -> Option<PredOrSyntax> {
-        self.terminals.pop_front()
+    pub fn iter(&self) -> impl Iterator<Item = &ParseInputItem> {
+        self.items.iter()
+    }
+
+    pub fn shift(&mut self) -> Option<ParseInputItem> {
+        self.items.pop_front()
     }
 
     pub fn shift_many(&mut self, n: usize) -> ParseInput {
         ParseInput {
-            terminals: self.terminals.drain(0..n).collect(),
+            items: self.items.drain(0..n).collect(),
         }
     }
 
-    pub fn unshift(&mut self, item: PredOrSyntax) {
-        self.terminals.push_front(item)
+    pub fn unshift(&mut self, item: ParseInputItem) {
+        self.items.push_front(item)
     }
 
-    pub fn shift_binary_operation(&mut self) -> Option<(bool, BinaryOperationKind)> {
-        self.shift().map(|token| match token {
-            PredOrSyntax::Op(OperatorToken::And) => (true, BinaryOperationKind::And),
-            PredOrSyntax::Op(OperatorToken::Or) => (true, BinaryOperationKind::Or),
-            PredOrSyntax::Op(OperatorToken::Comma) => (true, BinaryOperationKind::KeepLast),
-            other => {
+    pub fn shift_binary_operation(
+        &mut self,
+    ) -> Option<(bool, ParseInputItem, BinaryOperationKind)> {
+        self.shift().map(|item| match item.terminal() {
+            PredOrSyntax::Op(OperatorToken::And) => (true, item, BinaryOperationKind::And),
+            PredOrSyntax::Op(OperatorToken::Or) => (true, item, BinaryOperationKind::Or),
+            PredOrSyntax::Op(OperatorToken::Comma) => (true, item, BinaryOperationKind::KeepLast),
+            _ => {
                 // The next token wasn't an operator (e.g. it was (,
                 // -print, etc.).  Unshift the next token and return
                 // an implicit "and" so that (as POSIX requires)
                 // "-type f -name foo" means the same as "-type f -a
                 // -name foo".
-                self.unshift(other);
-                (false, BinaryOperationKind::And)
+                self.unshift(item);
+                let implicit = ParseInputItem {
+                    terminal: PredOrSyntax::Op(OperatorToken::And),
+                    // Since this is not a paren, the distance to the
+                    // balancing paren is None.
+                    balancing_paren_dist: None,
+                };
+                (false, implicit, BinaryOperationKind::And)
             }
         })
     }
-
-    pub fn unshift_binary_operation(&mut self, op: BinaryOperationKind) {
-        self.unshift(match op {
-            BinaryOperationKind::And => PredOrSyntax::Op(OperatorToken::And),
-            BinaryOperationKind::Or => PredOrSyntax::Op(OperatorToken::Or),
-            BinaryOperationKind::KeepLast => PredOrSyntax::Op(OperatorToken::Comma),
-        });
-    }
-}
-
-fn balancing_paren_position(input: &ParseInput) -> Option<usize> {
-    let mut open_count = 1usize;
-    for (i, item) in input.iter().enumerate() {
-        match item.maybe_get_paren() {
-            Some(Parenthesis::Left) => {
-                open_count += 1;
-            }
-            Some(Parenthesis::Right) => {
-                open_count -= 1;
-                if open_count == 0 {
-                    return Some(i);
-                }
-            }
-            None => (), // not interesting
-        }
-    }
-    None
 }
 
 /// Returns a parenthesis expression.  The left paren has already been consumed.
-fn get_paren_expression(input: &mut ParseInput) -> Result<Expression, ParseError> {
-    match balancing_paren_position(input) {
-        Some(n) => {
-            // Extract the whole interior of the parenthesised expression.
-            let mut head: ParseInput = input.shift_many(n);
-            // The first unshifted token must be the balancing
-            // parenthesis.  Check it's actually there.
-            match input.shift() {
-                Some(item) => match item.maybe_get_paren() {
-                    Some(Parenthesis::Right) => (),
-                    other => {
-                        panic!("expected that balancing_paren_position would identify the position of a right parenthesis, but instead we saw {other:?}");
-                    }
-                },
+fn get_paren_expression(
+    input: &mut ParseInput,
+    rparen_dist: NonZeroUsize,
+) -> Result<Expression, ParseError> {
+    match rparen_dist.get() {
+        0 => unreachable!("get_paren_expression should be called only on parens which balance"),
+        1 => Err(ParseError("empty parentheses".to_string())),
+        dist => {
+            // Extract the whole interior of the parenthesised
+            // expression.  We already consumed the left parenthesis,
+            // so for "( -print )" dist is 2 but we only want to shift
+            // 1 token to form the inner expression.
+            let mut head: ParseInput = input.shift_many(dist - 1);
+
+            // The next unshifted token must be the balancing
+            // parenthesis.  Remove it.
+            match input.shift().take().map(|item| item.take_terminal()) {
+                Some(PredOrSyntax::Paren(Parenthesis::Right)) => (),
                 None => {
-                    panic!("balancing_paren_position consumed the whole input without generating an error, but should have returned an error result instead.");
+                    unreachable!("right parenthesis is unexpectedly missing");
+                }
+                other => {
+                    unreachable!("the end of the parenthesised expression isn't a right parenthesis: {other:?}");
                 }
             }
+
             match get_expression(&mut head, None) {
                 Ok(Some(expr)) => Ok(expr),
                 Ok(None) => Err(ParseError("empty parentheses".to_string())),
                 Err(e) => Err(e),
             }
         }
-        None => Err(ParseError("missing right parenthesis ')'".to_string())),
     }
 }
 
@@ -342,89 +398,101 @@ fn get_expression(
         None => {
             return Ok(None);
         }
-        Some(PredOrSyntax::Op(op)) => {
-            match op {
-                OperatorToken::And | OperatorToken::Or | OperatorToken::Comma => {
-                    return Err(ParseError(format!(
-                        "unexpected operator token {op}, expected a predicate"
-                    )));
-                }
-                OperatorToken::Not => {
-                    // This could be "! -type d" or "! ( ... "
-                    // so we need to parse the next thing as an
-                    // expression, not simply a token.
-                    match get_expression(input, Some(Precedence::Not))? {
-                        Some(inverted) => Expression::Not(Box::new(inverted)),
-                        None => {
-                            return Err(ParseError(
-                                "incomplete expression: '!' at end of expression".to_string(),
-                            ));
+        Some(item) => {
+            let paren_dist = item.balancing_paren_dist();
+            match item.take_terminal() {
+                PredOrSyntax::Op(op) => {
+                    match op {
+                        OperatorToken::And | OperatorToken::Or | OperatorToken::Comma => {
+                            return Err(ParseError(format!(
+                                "unexpected operator token {op}, expected a predicate"
+                            )));
+                        }
+                        OperatorToken::Not => {
+                            // This could be "! -type d" or "! ( ... "
+                            // so we need to parse the next thing as an
+                            // expression, not simply a token.
+                            match get_expression(input, Some(Precedence::Not))? {
+                                Some(inverted) => Expression::Not(Box::new(inverted)),
+                                None => {
+                                    return Err(ParseError(
+                                        "incomplete expression: '!' at end of expression"
+                                            .to_string(),
+                                    ));
+                                }
+                            }
                         }
                     }
                 }
+                PredOrSyntax::Paren(Parenthesis::Left) => {
+                    match paren_dist {
+                        None => {
+                            unreachable!("ParseInput should contain only expressions with balanced parentheses");
+                        }
+                        Some(dist) => {
+                            return get_paren_expression(input, dist).map(|expr| Some(expr));
+                        }
+                    }
+                }
+                PredOrSyntax::Paren(Parenthesis::Right) => {
+                    unreachable!(
+                        "ParseInput should contain only expressions with balanced parentheses"
+                    );
+                }
+                PredOrSyntax::Predicate {
+                    token_type: _,
+                    predicate,
+                } => Expression::Just(predicate),
             }
         }
-        Some(PredOrSyntax::Paren(Parenthesis::Left)) => {
-            return get_paren_expression(input).map(|expr| Some(expr));
-        }
-        Some(PredOrSyntax::Paren(Parenthesis::Right)) => {
-            return Err(ParseError(
-                "found unexpected closing parenthesis at the beginning of an expression"
-                    .to_string(),
-            ))
-        }
-        Some(PredOrSyntax::Predicate {
-            token_type: _,
-            predicate,
-        }) => Expression::Just(predicate),
     };
 
     // Shift a token to identify whether we're looking at a binary
     // expression.   Use the precdence bound to ensure that
     // "x -a y -o b" is parsed as "( x -a y ) -o b".
-    let (explicit, op) = match input.shift_binary_operation() {
-        Some((explicit, op)) => {
+    let (explicit, kind) = match input.shift_binary_operation() {
+        None => {
+            // We reached end-of-input, or the end of a parenthesised
+            // expression.
+            return Ok(Some(left));
+        }
+        Some((explicit, item, kind)) => {
             if let Some(bound) = pred_bound {
-                if binary_operation_precedence(op) < bound {
+                if binary_operation_precedence(kind) < bound {
                     if !explicit {
-                        input.unshift_binary_operation(op);
+                        input.unshift(item);
                     }
-                    (explicit, None)
+                    // The next operator has lower precedence, so this
+                    // expression ends here.
+                    return Ok(Some(left));
                 } else {
-                    (explicit, Some(op))
+                    (explicit, kind)
                 }
             } else {
-                (explicit, Some(op))
+                (explicit, kind)
             }
         }
-        None => (false, None),
     };
 
-    if let Some(op) = op {
-        // If we have a binary expression, parse the expression
-        // forming the right-hand-side.
-        if let Some(right) = get_expression(input, Some(binary_operation_precedence(op)))? {
-            Ok(Some(Expression::BinaryOp(BinaryOperation::new(
-                op,
-                vec![left, right],
-            ))))
-        } else {
-            // We had a binary operation but no expression on its
-            // right-hand-side.  This is a syntax error.
-            assert!(explicit);
-            let symbol = match op {
-                BinaryOperationKind::And => "-a",
-                BinaryOperationKind::Or => "-o",
-                BinaryOperationKind::KeepLast => ",",
-            };
-            Err(ParseError(format!(
-                "binary operator '{symbol}' has no right-hand operand"
-            )))
-        }
+    // We have a binary expression, parse the expression forming the
+    // right-hand-side.
+    if let Some(right) = get_expression(input, Some(binary_operation_precedence(kind)))? {
+        Ok(Some(Expression::BinaryOp(BinaryOperation::new(
+            kind,
+            vec![left, right],
+        ))))
     } else {
-        // There was no explicit or implicit operator and thus the
-        // "left" expression is in fact the only expression.
-        Ok(Some(left))
+        // We had a binary operation but no expression on its
+        // right-hand-side.  This is a syntax error.
+        assert!(explicit);
+        let symbol = match kind {
+            BinaryOperationKind::And => "-a",
+            BinaryOperationKind::Or => "-o",
+            BinaryOperationKind::KeepLast => ",",
+        };
+        Err(ParseError(format!(
+            "binary operator '{symbol}' has no right-hand operand"
+        )))
     }
 }
 
@@ -444,7 +512,7 @@ pub fn parse_program(mut input: VecDeque<&str>) -> Result<(Vec<&str>, Expression
                 if starting_points.is_empty() {
                     starting_points.push(".");
                 }
-                let mut unparsed_program = ParseInput::new(predicates);
+                let mut unparsed_program = ParseInput::new(predicates)?;
                 // TODO: make get_expression take ownership of the input.
                 let program: Expression =
                     get_expression(&mut unparsed_program, None)?.unwrap_or_else(make_default_print);
