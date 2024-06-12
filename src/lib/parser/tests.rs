@@ -6,13 +6,6 @@ use std::collections::HashSet;
 use enum_iterator::all;
 
 #[test]
-fn test_precedence_comparison() {
-    assert!(Precedence::Comma < Precedence::Or);
-    assert!(Precedence::Or < Precedence::And);
-    assert!(Precedence::And < Precedence::Not);
-}
-
-#[test]
 fn test_tokenize_word() {
     const TESTCASES: &[(&str, TokenType)] = &[
         ("-print", TokenType::Pred(PredicateToken::Print)),
@@ -21,11 +14,26 @@ fn test_tokenize_word() {
         (")", TokenType::Paren(Parenthesis::Right)),
         ("!", TokenType::Op(OperatorToken::Not)),
         ("-not", TokenType::Op(OperatorToken::Not)),
-        ("-a", TokenType::Op(OperatorToken::And)),
-        ("-and", TokenType::Op(OperatorToken::And)),
-        ("-o", TokenType::Op(OperatorToken::Or)),
-        ("-or", TokenType::Op(OperatorToken::Or)),
-        (",", TokenType::Op(OperatorToken::Comma)),
+        (
+            "-a",
+            TokenType::Op(OperatorToken::Binary(BinaryOperationKind::And)),
+        ),
+        (
+            "-and",
+            TokenType::Op(OperatorToken::Binary(BinaryOperationKind::And)),
+        ),
+        (
+            "-o",
+            TokenType::Op(OperatorToken::Binary(BinaryOperationKind::Or)),
+        ),
+        (
+            "-or",
+            TokenType::Op(OperatorToken::Binary(BinaryOperationKind::Or)),
+        ),
+        (
+            ",",
+            TokenType::Op(OperatorToken::Binary(BinaryOperationKind::Comma)),
+        ),
     ];
     for (rep, tok_expected) in TESTCASES {
         match tokenize_word(rep) {
@@ -44,8 +52,10 @@ fn test_tokenize_word() {
 
 #[test]
 fn test_parse_next_item_exhaustive_for_predicates() {
-    fn do_valid_parse(input: &[&str]) -> Option<(PredicateToken, BoxedPredicate)> {
-        match parse_single_predicate(input) {
+    fn tokenize_valid_predicate<'a>(
+        input: &'a [&'a str],
+    ) -> Option<(PredicateToken, Option<&'a str>)> {
+        match tokenize_single_predicate(input) {
             Err(e) => {
                 panic!("input {input:?} should be valid but was not: {e}");
             }
@@ -69,8 +79,8 @@ fn test_parse_next_item_exhaustive_for_predicates() {
         &["-type", "D"],
     ];
     for fragment in test_inputs.iter() {
-        match do_valid_parse(fragment) {
-            Some((pred_token_type, _predicate)) => {
+        match tokenize_valid_predicate(fragment) {
+            Some((pred_token_type, _maybe_arg)) => {
                 tokens_seen.insert(pred_token_type);
             }
             None => (),
@@ -91,7 +101,7 @@ fn test_parse_type_invalid() {
         vec!["-type", "q"],  // invalid argument
     ];
     for input in test_inputs {
-        match parse_single_predicate(input.as_slice()) {
+        match parse_program(input.as_slice()) {
             Err(_) => (), // as excpted
             Ok(out) => {
                 panic!("parsed invalid input {input:?} but unexpectedly got valid result {out:?}");
@@ -114,7 +124,7 @@ fn test_parse_type_valid() {
     ];
     for (letter, _expected_indicator) in test_inputs {
         let input = &["-type", letter];
-        match parse_single_predicate(input) {
+        match tokenize_single_predicate(input) {
             Err(e) => {
                 panic!("failed to parse {input:?}: {e}");
             }
@@ -130,13 +140,18 @@ fn test_parse_type_valid() {
 
 #[cfg(test)]
 fn verify_parse(input: &[&str], expected_starts: &[&str], expected_expr: &Expression) {
-    let v: VecDeque<&str> = input.iter().copied().collect();
-    match parse_program(v) {
+    match tokenize_program(input) {
+        Ok(_) => (),
+        Err(e) => {
+            panic!("failed to tokenize input {input:?}: {e}");
+        }
+    }
+    match parse_program(input) {
         Err(e) => {
             panic!("failed to parse {input:?}: {e}");
         }
         Ok((got_starts, got_expression)) => {
-            assert_eq!(&got_starts, expected_starts);
+            assert_eq!(got_starts, expected_starts);
             let expected_repr = format!("{expected_expr:#?}");
             let got_repr = format!("{got_expression:#?}");
             if expected_repr != got_repr {

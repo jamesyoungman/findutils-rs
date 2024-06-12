@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::fmt::Write;
 
 use getopt::{ErrorKind, Opt};
@@ -17,7 +16,7 @@ pub struct Options {
     pub traversal: TraversalMode,
 }
 
-pub fn parse_options(mut args: VecDeque<&str>) -> Result<(Options, VecDeque<&str>), UsageError> {
+pub fn parse_options<'a>(args: &'a [&'a str]) -> Result<(Options, &'a [&'a str]), UsageError> {
     // TODO: we need to support starting points which aren't valid UTF-8.
     //
     // To do that we will probably need to access the FFI interface
@@ -57,25 +56,17 @@ pub fn parse_options(mut args: VecDeque<&str>) -> Result<(Options, VecDeque<&str
         }
     }
     let limit = opts.index() - if need_unshift { 1 } else { 0 };
-    args.drain(..limit);
     let opts = Options { traversal };
-    Ok((opts, args))
+    Ok((opts, &args[..limit]))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn parse_opt_vec(mut args: Vec<&str>) -> Result<(Options, Vec<&str>), UsageError> {
-        args.insert(0, "find"); // argv[0]
-        let dq: VecDeque<&str> = args.iter().copied().collect();
-        match parse_options(dq) {
-            Err(e) => Err(e),
-            Ok((opts, args)) => {
-                let v: Vec<&str> = args.iter().copied().collect();
-                Ok((opts, v))
-            }
-        }
+    fn parse_opt_vec<'a>(args: &'a [&'a str]) -> Result<(Options, &'a [&'a str]), UsageError> {
+        assert!(args.len() > 0);
+        parse_options(&args)
     }
 
     #[test]
@@ -85,9 +76,9 @@ mod tests {
                 Options {
                     traversal: TraversalMode::P,
                 },
-                vec![]
+                [].as_slice(),
             )),
-            parse_opt_vec(Vec::new())
+            parse_opt_vec(&["find"])
         );
     }
 
@@ -98,9 +89,9 @@ mod tests {
                 Options {
                     traversal: TraversalMode::P,
                 },
-                vec![]
+                [].as_slice()
             )),
-            parse_opt_vec(vec!["-P"])
+            parse_opt_vec(&["find", "-P"])
         );
     }
 
@@ -111,9 +102,9 @@ mod tests {
                 Options {
                     traversal: TraversalMode::P,
                 },
-                vec![]
+                [].as_slice()
             )),
-            parse_opt_vec(vec!["-HP"])
+            parse_opt_vec(&["-HP"])
         );
     }
 
@@ -124,9 +115,9 @@ mod tests {
                 Options {
                     traversal: TraversalMode::P,
                 },
-                vec![]
+                [].as_slice()
             )),
-            parse_opt_vec(vec!["-LP"])
+            parse_opt_vec(&["find", "-LP"])
         );
     }
 
@@ -136,13 +127,13 @@ mod tests {
             Options {
                 traversal: TraversalMode::L,
             },
-            vec![],
+            [].as_slice(),
         ));
-        assert_eq!(expected, parse_opt_vec(vec!["-L"]));
-        assert_eq!(expected, parse_opt_vec(vec!["-LL"]));
-        assert_eq!(expected, parse_opt_vec(vec!["-HL"]));
-        assert_eq!(expected, parse_opt_vec(vec!["-PL"]));
-        assert_eq!(expected, parse_opt_vec(vec!["-P", "-L"]));
+        assert_eq!(expected, parse_opt_vec(&["find", "-L"]));
+        assert_eq!(expected, parse_opt_vec(&["find", "-LL"]));
+        assert_eq!(expected, parse_opt_vec(&["find", "-HL"]));
+        assert_eq!(expected, parse_opt_vec(&["find", "-PL"]));
+        assert_eq!(expected, parse_opt_vec(&["find", "-P", "-L"]));
     }
 
     #[test]
@@ -152,9 +143,9 @@ mod tests {
                 Options {
                     traversal: TraversalMode::H,
                 },
-                vec![]
+                [].as_slice()
             )),
-            parse_opt_vec(vec!["-H"])
+            parse_opt_vec(&["find", "-H"])
         );
     }
 
@@ -164,10 +155,10 @@ mod tests {
             Options {
                 traversal: TraversalMode::H,
             },
-            vec![],
+            [].as_slice(),
         ));
-        assert_eq!(expected, parse_opt_vec(vec!["-H"]));
-        assert_eq!(expected, parse_opt_vec(vec!["-H", "--"]));
+        assert_eq!(expected, parse_opt_vec(&["find", "-H"]));
+        assert_eq!(expected, parse_opt_vec(&["find", "-H", "--"]));
     }
 
     #[test]
@@ -176,10 +167,10 @@ mod tests {
             Options {
                 traversal: TraversalMode::P,
             },
-            vec!["foo/"],
+            ["foo/"].as_slice(),
         ));
-        assert_eq!(expected, parse_opt_vec(vec!["foo/"]));
-        assert_eq!(expected, parse_opt_vec(vec!["--", "foo/"]));
+        assert_eq!(expected, parse_opt_vec(["find", "foo/"].as_slice()));
+        assert_eq!(expected, parse_opt_vec(&["find", "--", "foo/"]));
     }
 
     #[test]
@@ -188,9 +179,9 @@ mod tests {
             Options {
                 traversal: TraversalMode::L,
             },
-            vec!["foo/", "-print"],
+            ["foo/", "-print"].as_slice(),
         ));
-        assert_eq!(expected, parse_opt_vec(vec!["-L", "foo/", "-print"]));
+        assert_eq!(expected, parse_opt_vec(&["find", "-L", "foo/", "-print"]));
     }
 
     #[test]
@@ -199,9 +190,9 @@ mod tests {
             Options {
                 traversal: TraversalMode::L,
             },
-            vec!["-print"],
+            ["-print"].as_slice(),
         ));
-        assert_eq!(expected, parse_opt_vec(vec!["-L", "--", "-print"]));
+        assert_eq!(expected, parse_opt_vec(&["find", "-L", "--", "-print"]));
     }
 
     #[test]
@@ -210,8 +201,8 @@ mod tests {
             Options {
                 traversal: TraversalMode::L,
             },
-            vec!["-print"],
+            ["-print"].as_slice(),
         ));
-        assert_eq!(expected, parse_opt_vec(vec!["-L", "-print"]));
+        assert_eq!(expected, parse_opt_vec(&["find", "-L", "-print"]));
     }
 }

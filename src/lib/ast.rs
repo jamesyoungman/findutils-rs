@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use downcast_rs::{impl_downcast, Downcast};
 use fts::fts::FtsEntry;
@@ -18,11 +18,21 @@ impl_downcast!(Predicate);
 
 pub type BoxedPredicate = Box<dyn Predicate + Send + Sync>;
 
-#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone, Hash)]
 pub enum BinaryOperationKind {
-    KeepLast, // like find's comma operator
+    Comma,
     And,
     Or,
+}
+
+impl Display for BinaryOperationKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            BinaryOperationKind::Comma => ",",
+            BinaryOperationKind::And => "-a",
+            BinaryOperationKind::Or => "-or",
+        })
+    }
 }
 
 #[derive(Debug)]

@@ -7,7 +7,7 @@ use super::errors::PredicateFailure;
 impl Predicate for BinaryOperation {
     fn eval(&self, target: &Target) -> Result<bool, PredicateFailure> {
         match self.kind() {
-            BinaryOperationKind::KeepLast => self
+            BinaryOperationKind::Comma => self
                 .children()
                 .try_fold(true, |_, action| action.eval(target)),
             BinaryOperationKind::And => self
@@ -28,7 +28,7 @@ impl Predicate for BinaryOperation {
         let result: Vec<Cow<'_, str>> =
             Vec::with_capacity(self.children.len().checked_mul(2).unwrap_or(1));
         let operator: &'static str = match self.kind() {
-            BinaryOperationKind::KeepLast => ",",
+            BinaryOperationKind::Comma => ",",
             BinaryOperationKind::And => "-a",
             BinaryOperationKind::Or => "-o",
         };

@@ -4,8 +4,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 
 use findlib::parser;
 
-fn build_paren_input(n_parens: usize) -> VecDeque<&'static str> {
-    let mut input: VecDeque<&str> = VecDeque::with_capacity(n_parens * 2 + 1);
+fn build_paren_input(n_parens: usize) -> Vec<&'static str> {
+    let mut input: Vec<&str> = Vec::with_capacity(n_parens * 2 + 1);
     for _i in 0..n_parens {
         input.push_back("(");
     }
@@ -43,28 +43,33 @@ fn build_paren_input(n_parens: usize) -> VecDeque<&'static str> {
 
 fn many_parens(c: &mut Criterion) {
     c.bench_function("parens 0", |b| {
+        let input0 = build_paren_input(0);
         b.iter(|| {
-            let _ = parser::parse_program(build_paren_input(0));
+            let _ = parser::parse_program(&input0);
         })
     });
     c.bench_function("parens 10", |b| {
+        let input10 = build_paren_input(10);
         b.iter(|| {
-            let _ = parser::parse_program(build_paren_input(10));
+            let _ = parser::parse_program(&input10);
         })
     });
     c.bench_function("parens 100", |b| {
+        let input100 = build_paren_input(100);
         b.iter(|| {
-            let _ = parser::parse_program(build_paren_input(100));
+            let _ = parser::parse_program(&input100);
         })
     });
     c.bench_function("parens 1000", |b| {
+        let input1000 = build_paren_input(1000);
         b.iter(|| {
-            let _ = parser::parse_program(build_paren_input(1000));
+            let _ = parser::parse_program(&input1000);
         })
     });
     c.bench_function("parens 10000", |b| {
+        let input10k = build_paren_input(10_000);
         b.iter(|| {
-            let _ = parser::parse_program(build_paren_input(10000));
+            let _ = parser::parse_program(&input10k);
         })
     });
 }

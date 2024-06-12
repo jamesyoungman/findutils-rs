@@ -1,6 +1,5 @@
 use fts::fts::fts_option::Flags;
 use fts::fts::{Fts, FtsError};
-use std::collections::VecDeque;
 
 mod options;
 
@@ -8,8 +7,8 @@ use findlib::{parser, visit, UsageError};
 use options::{parse_options, TraversalMode};
 
 fn run(args: Vec<String>) -> i32 {
-    let parser_args: VecDeque<&str> = args.iter().map(|s| s.as_str()).collect();
-    match parse_options(parser_args) {
+    let parser_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    match parse_options(&parser_args) {
         Ok((options, remaining_args)) => {
             let (start_points, program) = match parser::parse_program(remaining_args) {
                 Ok((start, program)) => (start, program),
