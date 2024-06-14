@@ -9,10 +9,9 @@ use super::*;
 mod and;
 mod comma;
 mod or;
-mod type_pred;
-
-#[cfg(expected_failures)]
+mod parens;
 mod program;
+mod type_pred;
 
 use enum_iterator::all;
 

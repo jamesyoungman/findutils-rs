@@ -101,6 +101,7 @@ fn lonely_comma() {
     });
 }
 
+#[test]
 fn double_comma() {
     // Verify that a double comma is an error.
     test_comma_reduction(CommaReductionTestCase {

@@ -7,40 +7,61 @@ use findlib::parser;
 fn build_paren_input(n_parens: usize) -> Vec<&'static str> {
     let mut input: Vec<&str> = Vec::with_capacity(n_parens * 2 + 1);
     for _i in 0..n_parens {
-        input.push_back("(");
+        input.push("(");
     }
-    input.push_back("-print");
+    input.push("-print");
     for _i in 0..n_parens {
-        input.push_back(")");
+        input.push(")");
     }
     input
 }
 
-// Our current (I suppose quadratic) algorithm for extracting
-// parenthesised expressions is unsurprisingly slow flr large numbers
-// of parentheses.  Here is a benchmark result:
+// Previous algorithm:
 //
-// parens 0                time:   [62.758 ns 62.952 ns 63.363 ns]
-//                         change: [-17.647% -13.590% -9.7491%] (p = 0.00 < 0.05)
-//                         Performance has improved.
+//   parens 0                time:   [62.474 ns 62.669 ns 63.144 ns]
+//                           change: [-2.1305% -0.5851% +0.8854%] (p = 0.52 > 0.05)
+//                           No change in performance detected.
 //
-// parens 10               time:   [1.3519 µs 1.3584 µs 1.3681 µs]
-//                         change: [-1.7614% -1.0598% -0.3665%] (p = 0.06 > 0.05)
-//                         No change in performance detected.
+//   parens 10               time:   [1.3612 µs 1.3634 µs 1.3655 µs]
+//                           change: [-1.3835% -0.6346% +0.0185%] (p = 0.11 > 0.05)
+//                           No change in performance detected.
 //
-// parens 100              time:   [77.259 µs 77.529 µs 78.053 µs]
-//                         change: [-1.8876% -0.9837% -0.0573%] (p = 0.27 > 0.05)
-//                         No change in performance detected.
+//   parens 100              time:   [77.329 µs 77.494 µs 77.834 µs]
+//                           change: [-0.4435% +0.0787% +0.6481%] (p = 0.80 > 0.05)
+//                           No change in performance detected.
 //
-// parens 1000             time:   [15.281 ms 15.382 ms 15.451 ms]
-//                         change: [+115.26% +116.66% +118.08%] (p = 0.00 < 0.05)
-//                         Performance has regressed.
+//   parens 1000             time:   [7.0437 ms 7.0672 ms 7.0915 ms]
+//                           change: [-54.530% -54.307% -54.071%] (p = 0.00 < 0.05)
+//                           Performance has improved.
 //
-// Benchmarking parens 10000: Warming up for 3.0000 s
-// Warning: Unable to complete 10 samples in 5.0s. You may wish to increase target time to 15.3s.
-// parens 10000            time:   [1.5207 s 1.5241 s 1.5276 s]
+//   Benchmarking parens 10000: Warming up for 3.0000 s
+//   Warning: Unable to complete 10 samples in 5.0s. You may wish to increase target time to 15.5s.
+//   parens 10000            time:   [1.4998 s 1.5037 s 1.5079 s]
+//                           change: [-3.0709% -2.6398% -2.2016%] (p = 0.00 < 0.05)
+//                           Performance has improved.
 //
-
+// New algorithm:
+//
+//   parens 0                time:   [197.35 ns 197.92 ns 198.47 ns]
+//                           change: [+211.04% +214.39% +216.96%] (p = 0.00 < 0.05)
+//                           Performance has regressed.
+//
+//   parens 10               time:   [1.9553 µs 1.9603 µs 1.9714 µs]
+//                           change: [+43.472% +44.784% +46.481%] (p = 0.00 < 0.05)
+//                           Performance has regressed.
+//
+//   parens 100              time:   [16.963 µs 16.991 µs 17.053 µs]
+//                           change: [-78.248% -78.125% -78.012%] (p = 0.00 < 0.05)
+//                           Performance has improved.
+//
+//   parens 1000             time:   [167.15 µs 170.29 µs 172.34 µs]
+//                           change: [-97.630% -97.608% -97.585%] (p = 0.00 < 0.05)
+//                           Performance has improved.
+//
+//   parens 10000            time:   [2.0903 ms 2.1049 ms 2.1217 ms]
+//                           change: [-99.860% -99.859% -99.857%] (p = 0.00 < 0.05)
+//                           Performance has improved.
+//
 fn many_parens(c: &mut Criterion) {
     c.bench_function("parens 0", |b| {
         let input0 = build_paren_input(0);

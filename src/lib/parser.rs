@@ -1,11 +1,9 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeMap;
 use std::collections::VecDeque;
 
 use std::fmt::Display;
-use std::num::NonZeroUsize;
 
 use crate::ast::BinaryOperation;
 
@@ -99,9 +97,15 @@ enum PredOrSyntax<'a> {
     Paren(Parenthesis),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CommandLineItem<'a> {
+    StartingPoint(&'a str),
+    Code(PredOrSyntax<'a>),
+}
+
 fn tokenize_next_item<'a>(
     input: &mut &'a [&'a str],
-) -> Result<Option<PredOrSyntax<'a>>, ParseError> {
+) -> Result<Option<CommandLineItem<'a>>, ParseError> {
     let mut pop_arg = || -> Option<&str> {
         match input {
             [first, rest @ ..] => {
@@ -114,26 +118,32 @@ fn tokenize_next_item<'a>(
 
     if let Some(orig_token) = pop_arg() {
         match tokenize_word(orig_token) {
-            Err(_) => Err(ParseError(format!(
-                "unexpected word '{orig_token}'; expected a test or action"
-            ))),
+            Err(e) => {
+                if orig_token.starts_with('-') {
+                    return Err(e);
+                } else {
+                    Ok(Some(CommandLineItem::StartingPoint(orig_token)))
+                }
+            }
             Ok(TokenType::Pred(pred_tok)) => match pred_tok.arity() {
-                Arity::Zero => Ok(Some(PredOrSyntax::Predicate {
+                Arity::Zero => Ok(Some(CommandLineItem::Code(PredOrSyntax::Predicate {
                     token_type: pred_tok,
                     arg: None,
-                })),
+                }))),
                 Arity::One => match pop_arg() {
-                    Some(arg) => Ok(Some(PredOrSyntax::Predicate {
+                    Some(arg) => Ok(Some(CommandLineItem::Code(PredOrSyntax::Predicate {
                         token_type: pred_tok,
                         arg: Some(arg),
-                    })),
+                    }))),
                     None => Err(ParseError(format!(
                         "predicate {orig_token} takes an argument but one was not specified"
                     ))),
                 },
             },
-            Ok(TokenType::Op(op)) => Ok(Some(PredOrSyntax::Op(op))),
-            Ok(TokenType::Paren(side)) => Ok(Some(PredOrSyntax::Paren(side))),
+            Ok(TokenType::Op(op)) => Ok(Some(CommandLineItem::Code(PredOrSyntax::Op(op)))),
+            Ok(TokenType::Paren(side)) => {
+                Ok(Some(CommandLineItem::Code(PredOrSyntax::Paren(side))))
+            }
         }
     } else {
         Ok(None) // end of input
@@ -146,7 +156,7 @@ fn tokenize_single_predicate<'a>(
 ) -> Result<Option<(PredicateToken, Option<&'a str>)>, ParseError> {
     match tokenize_next_item(&mut input) {
         Err(e) => Err(e),
-        Ok(Some(PredOrSyntax::Predicate { token_type, arg })) => {
+        Ok(Some(CommandLineItem::Code(PredOrSyntax::Predicate { token_type, arg }))) => {
             let result = Some((token_type, arg));
             // Check that we have exhausted the input.
             match tokenize_next_item(&mut input) {
@@ -157,6 +167,9 @@ fn tokenize_single_predicate<'a>(
                 }
             }
             Ok(result)
+        }
+        Ok(Some(CommandLineItem::StartingPoint(here))) => {
+            panic!("input token {here:?} could not be parsed as a predicate");
         }
         Ok(None) => Ok(None),
         other => {
@@ -194,54 +207,6 @@ fn make_default_print() -> Expression {
     Expression::Just(Box::new(PrintPredicate::new()))
 }
 
-fn find_matching_parens(
-    input: &[PartialNoPredicates],
-) -> Result<BTreeMap<usize, NonZeroUsize>, ParseError> {
-    let mut result: BTreeMap<usize, NonZeroUsize> = BTreeMap::new();
-    let mut last_pos_of_lparen_at_depth: Vec<usize> = Vec::new();
-    for (i, terminal) in input.iter().enumerate() {
-        match terminal.maybe_get_paren() {
-            None => (),
-            Some(Parenthesis::Left) => {
-                last_pos_of_lparen_at_depth.push(i);
-            }
-            Some(Parenthesis::Right) => match last_pos_of_lparen_at_depth.pop() {
-                Some(leftpos) => match NonZeroUsize::new(i - leftpos) {
-                    Some(value) => {
-                        let previous = result.insert(leftpos, value);
-                        assert!(previous.is_none());
-                    }
-                    None => {
-                        unreachable!("internal error: a parenthesis cannot match itself");
-                    }
-                },
-                None => {
-                    return Err(ParseError("unbalanced parentheses".to_string()));
-                }
-            },
-        }
-    }
-    Ok(result)
-}
-
-#[derive(Debug)]
-struct ParenMap {
-    map: BTreeMap<usize, NonZeroUsize>,
-}
-
-impl ParenMap {
-    fn new(input: &[PartialNoPredicates]) -> Result<ParenMap, ParseError> {
-        Ok(ParenMap {
-            map: find_matching_parens(input)?,
-        })
-    }
-
-    fn lookup(&self, origin: usize, from: usize) -> Option<NonZeroUsize> {
-        let key: usize = origin + from;
-        self.map.get(&key).copied()
-    }
-}
-
 #[derive(Debug)]
 enum PartialNoParens {
     Expr(Expression),
@@ -250,68 +215,83 @@ enum PartialNoParens {
 
 fn reduce_paren_expressions<'a>(
     mut input: VecDeque<PartialNoPredicates>,
-    paren_map_origin: usize,
-    paren_map: &ParenMap,
 ) -> Result<VecDeque<PartialNoParens>, ParseError> {
-    let mut output: VecDeque<PartialNoParens> = VecDeque::with_capacity(input.len());
-    let mut pos_in_paren_map = 0;
+    // The member of `output` at position i represents an incompletely
+    // parsed parenthesis expression containing i open parentheses to
+    // its left.
+    let mut output: Vec<VecDeque<PartialNoParens>> = Vec::new();
+    // Before we've started parsing anything, we have an empty
+    // expression having 0 open parentheses to its left, so output
+    // should have one member at position 0.
+    output.push(VecDeque::new());
+
+    // Shift items from the terminals in `input`.
     while let Some(item) = input.pop_front() {
         match item {
-            PartialNoPredicates::Expr(e) => {
-                output.push_back(PartialNoParens::Expr(e));
+            PartialNoPredicates::Expr(expr) => {
+                // Add this expression to the current
+                // most-deeply-nested parenthesis expression.
+                output
+                    .last_mut()
+                    .unwrap()
+                    .push_back(PartialNoParens::Expr(expr));
             }
             PartialNoPredicates::Op(op) => {
-                output.push_back(PartialNoParens::Op(op));
+                // Add this operator to the current
+                // most-deeply-nested parenthesis expression.
+                output
+                    .last_mut()
+                    .unwrap()
+                    .push_back(PartialNoParens::Op(op));
             }
             PartialNoPredicates::Lparen => {
-                match paren_map
-                    .lookup(paren_map_origin, pos_in_paren_map)
-                    .map(|pos| pos.get())
-                {
-                    None => {
-                        return Err(ParseError("unmatched '('".to_string()));
+                // Open a deeper level of nesting.  The expression at
+                // the end of `output` is still incomplete, and when
+                // we see the ')' for this new parenthesis expression,
+                // we will turn that into an expression and push it
+                // onto the end of the expression which until just now
+                // was the most deeply nested one.
+                output.push(VecDeque::new());
+            }
+            PartialNoPredicates::Rparen => match output.pop() {
+                // The expression we just popped off the back of the
+                // stack is a completed parenthesis expression.
+                Some(items) => {
+                    if output.len() < 1 {
+                        // This is not a valid state as there must
+                        // always be a top-level expression.
+                        return Err(ParseError("too many ')'".to_string()));
                     }
-                    Some(rparen_pos) => {
-                        let mut tail = input.split_off(rparen_pos);
-                        // tail starts at the right paren; discard that.
-                        match tail.pop_front() {
-                            Some(PartialNoPredicates::Rparen) => (),
-                            Some(other) => {
-                                unreachable!("epected ')', got {other:?}");
-                            }
-                            None => {
-                                unreachable!(
-                                    "tried to consume a token from beyond the end of the input."
-                                );
-                            }
-                        }
-                        // This is a recursive call (because
-                        // parse_expression is our caller), but we
-                        // recurse on a smaller slice of the overall
-                        // expression, so the recursion must
-                        // terminate.
-                        let consumed = input.len();
-                        let expr = parse_expression(
-                            input,
-                            paren_map_origin + pos_in_paren_map,
-                            paren_map,
-                        )?;
-                        input = tail;
-                        pos_in_paren_map += consumed;
-                        output.push_back(PartialNoParens::Expr(expr));
-                    }
+                    // Reduce the newly-parsed complete parentheised
+                    // expression and push it onto the end of the
+                    // still-open parenthesis expression which
+                    // encloses it.
+                    let expr = parse_noparen_expression(items)?;
+                    output
+                        .last_mut()
+                        .unwrap()
+                        .push_back(PartialNoParens::Expr(expr));
                 }
-            }
-            PartialNoPredicates::Rparen => {
-                return Err(ParseError(
-                    "found right-parenthesis '(' without previous balancing left-parenthesis '('"
-                        .to_string(),
-                ));
-            }
+                None => unreachable!(),
+            },
         }
-        pos_in_paren_map += 1;
     }
-    Ok(output)
+    // There are no more items to shift.  If the parenthesised
+    // expression is balanced, `output` will contain exactly one
+    // member.
+    if let Some(items) = output.pop() {
+        if output.is_empty() {
+            // It had contained one member so the expression must have
+            // been balanced.
+            Ok(items)
+        } else {
+            // We ran out of input, but there were not enough
+            // right-parens to balance everthing.
+            Err(ParseError("too many '('".to_string()))
+        }
+    } else {
+        unreachable!()
+    }
 }
 
 #[derive(Debug)]
@@ -582,52 +562,66 @@ enum PartialNoPredicates {
     Rparen,
 }
 
-impl PartialNoPredicates {
-    fn maybe_get_paren(&self) -> Option<Parenthesis> {
-        match self {
-            PartialNoPredicates::Lparen => Some(Parenthesis::Left),
-            PartialNoPredicates::Rparen => Some(Parenthesis::Right),
-            _ => None,
-        }
-    }
+// parse expression parses the expression as a whole and, recursively,
+// the contents of parenthesised expressions.
+fn parse_expression(input: VecDeque<PartialNoPredicates>) -> Result<Expression, ParseError> {
+    reduce_paren_expressions(input).and_then(parse_noparen_expression)
 }
 
 // parse expression parses the expression as a whole and, recursively,
 // the contents of parenthesised expressions.
-fn parse_expression(
-    input: VecDeque<PartialNoPredicates>,
-    paren_map_origin: usize,
-    paren_map: &ParenMap,
-) -> Result<Expression, ParseError> {
-    reduce_paren_expressions(input, paren_map_origin, paren_map)
-        .and_then(reduce_not_ops)
+fn parse_noparen_expression(input: VecDeque<PartialNoParens>) -> Result<Expression, ParseError> {
+    reduce_not_ops(input)
         .and_then(reduce_and_ops)
         .and_then(reduce_or_ops)
         .and_then(reduce_comma_ops)
 }
 
-pub fn parse_program<'a>(input: &'a [&'a str]) -> Result<(&'a [&'a str], Expression), ParseError> {
-    fn tokenize_program<'a>(
-        input: &'a [&'a str],
-    ) -> Result<(&'a [&'a str], Vec<PredOrSyntax>), ParseError> {
-        let original_input = input;
-        let starting_points_end: usize = input
-            .iter()
-            .take_while(|item| !item.starts_with('-'))
-            .count();
-        let starting_points = &original_input[0..starting_points_end];
-        let mut program_tokens = &original_input[starting_points_end..];
-        let mut predicates: Vec<PredOrSyntax> = Vec::with_capacity(input.len());
-        while let Some(item) = tokenize_next_item(&mut program_tokens)? {
-            predicates.push(item);
+fn reduce_predicates<'a>(
+    input: &[PredOrSyntax<'a>],
+) -> Result<Vec<PartialNoPredicates>, ParseError> {
+    fn mapper(pred: &PredOrSyntax) -> Result<PartialNoPredicates, ParseError> {
+        match pred {
+            PredOrSyntax::Op(op) => Ok(PartialNoPredicates::Op(*op)),
+            PredOrSyntax::Paren(Parenthesis::Left) => Ok(PartialNoPredicates::Lparen),
+            PredOrSyntax::Paren(Parenthesis::Right) => Ok(PartialNoPredicates::Rparen),
+            PredOrSyntax::Predicate { token_type, arg } => {
+                Ok(PartialNoPredicates::Expr(just(*token_type, *arg)?))
+            }
         }
-        Ok((starting_points, predicates))
     }
 
-    fn reduce_predicates<'a>(
-        _input: &[PredOrSyntax<'a>],
-    ) -> Result<Vec<PartialNoPredicates>, ParseError> {
-        todo!("write reduce_predicates")
+    input
+        .iter()
+        .try_fold(Vec::with_capacity(input.len()), |mut acc, item| {
+            acc.push(mapper(item)?);
+            Ok(acc)
+        })
+}
+
+pub fn parse_program<'a>(input: &'a [&'a str]) -> Result<(&'a [&'a str], Expression), ParseError> {
+    fn tokenize_program<'a>(
+        mut input: &'a [&'a str],
+    ) -> Result<(&'a [&'a str], Vec<PredOrSyntax>), ParseError> {
+        let orig_input = input;
+        let mut predicates: Vec<PredOrSyntax> = Vec::with_capacity(input.len());
+        let mut end_of_starting_points: usize = 0;
+        while let Some(item) = tokenize_next_item(&mut input)? {
+            match item {
+                CommandLineItem::StartingPoint(arg) => {
+                    if predicates.is_empty() {
+                        end_of_starting_points += 1;
+                    } else {
+                        return Err(ParseError(format!("{arg} is not a valid predicate")));
+                    }
+                }
+                CommandLineItem::Code(pred) => {
+                    predicates.push(pred);
+                }
+            }
+        }
+        let starting_points = &orig_input[0..end_of_starting_points];
+        Ok((starting_points, predicates))
     }
 
     // Separate out the initial arguments representing the starting
@@ -641,15 +635,12 @@ pub fn parse_program<'a>(input: &'a [&'a str]) -> Result<(&'a [&'a str], Express
     // (parentheses and unary or binary operators).
     let no_predicates = reduce_predicates(&predicates)?;
 
-    // For each open parenthesis, locate the matching close-parenthesis.
-    let paren_map = ParenMap::new(&no_predicates)?;
-
     // Convert no_predicates from a Vec (required by ParenMap::new) to
     // a VecDeque (required by the remaining parse steps).
     let no_predicates: VecDeque<PartialNoPredicates> = no_predicates.into_iter().collect();
 
     // Parse the program into a single expression and return it, with
     // the starting points.
-    let expr: Expression = parse_expression(no_predicates, 0, &paren_map)?;
+    let expr: Expression = parse_expression(no_predicates)?;
     Ok((starting_points, expr))
 }

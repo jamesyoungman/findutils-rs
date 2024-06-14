@@ -31,11 +31,7 @@ fn type_expr(arg: &str) -> Expression {
 
 #[test]
 fn test_empty() {
-    verify_parse(
-        &[],
-        &["."],
-        &Expression::Just(Box::new(PrintPredicate::new())),
-    );
+    verify_parse(&[], &[], &Expression::Just(Box::new(PrintPredicate::new())));
 }
 
 #[test]
@@ -50,10 +46,13 @@ fn test_explicit_start() {
 }
 
 #[test]
-fn test_implicit_start() {
+fn test_missing_start() {
     verify_parse(
         &["-print"],
-        &["."],
+        // We no longer have the parser emit a default starting point;
+        // instead we take care of that at the top level (in the
+        // binary).
+        &[],
         &Expression::Just(Box::new(PrintPredicate::new())),
     );
 }

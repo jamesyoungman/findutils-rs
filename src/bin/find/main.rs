@@ -28,8 +28,13 @@ fn run(args: Vec<String>) -> i32 {
                 TraversalMode::L => Flags::LOGICAL,
                 TraversalMode::H => Flags::COMFOLLOW,
             });
-            let start_points: Vec<String> =
-                start_points.into_iter().map(|s| s.to_string()).collect();
+            let start_points = {
+                let mut v: Vec<String> = start_points.into_iter().map(|s| s.to_string()).collect();
+                if v.is_empty() {
+                    v.push(".".to_string());
+                }
+                v
+            };
             let mut fts = match Fts::new(
                 start_points,
                 ftsflags,
