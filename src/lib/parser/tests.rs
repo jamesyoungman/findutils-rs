@@ -7,6 +7,7 @@ use super::super::ast::BinaryOperation;
 use super::*;
 
 mod comma;
+mod or;
 mod type_pred;
 
 #[cfg(expected_failures)]

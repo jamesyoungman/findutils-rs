@@ -395,16 +395,22 @@ fn reduce_or_ops<'a>(
     let mut at_operator = false;
 
     fn shift_or_expression(
-        or_expression: Vec<Expression>,
+        mut or_expression: Vec<Expression>,
         output: &mut VecDeque<PartialCommaOnly>,
     ) -> Vec<Expression> {
-        if !or_expression.is_empty() {
-            output.push_back(PartialCommaOnly::Expr(Expression::BinaryOp(
-                BinaryOperation::new(BinaryOperationKind::Or, or_expression),
-            )));
-            Vec::new()
-        } else {
-            or_expression
+        match or_expression.len() {
+            0 | 1 => {
+                if let Some(expr) = or_expression.pop() {
+                    output.push_back(PartialCommaOnly::Expr(expr));
+                }
+                or_expression
+            }
+            _ => {
+                output.push_back(PartialCommaOnly::Expr(Expression::BinaryOp(
+                    BinaryOperation::new(BinaryOperationKind::Or, or_expression),
+                )));
+                Vec::new()
+            }
         }
     }
 
@@ -422,7 +428,11 @@ fn reduce_or_ops<'a>(
                 }
             }
             PartialOrCommaOnly::Or => {
-                at_operator = true;
+                if current_or_expression.is_empty() {
+                    return Err(ParseError("expressions cannot start with -or".to_string()));
+                } else {
+                    at_operator = true;
+                }
             }
             PartialOrCommaOnly::Comma => {
                 if !current_or_expression.is_empty() {
