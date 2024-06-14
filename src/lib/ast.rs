@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, Write};
 
 use downcast_rs::{impl_downcast, Downcast};
 use fts::fts::FtsEntry;
@@ -12,6 +12,21 @@ pub trait Predicate: Debug + Downcast {
     fn eval(&self, target: &Target) -> Result<bool, PredicateFailure>;
     fn display_args<'a>(&self) -> Vec<Cow<'a, str>>;
     fn inhibits_default_print(&self) -> bool;
+}
+
+impl Display for dyn Predicate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut first = true;
+        for arg in self.display_args() {
+            if first {
+                first = false;
+            } else {
+                f.write_char(' ')?;
+            }
+            write!(f, "{}", arg)?;
+        }
+        Ok(())
+    }
 }
 
 impl_downcast!(Predicate);

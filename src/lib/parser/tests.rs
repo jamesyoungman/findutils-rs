@@ -1,9 +1,19 @@
 // Parser tests.
+use std::collections::HashSet;
+use std::collections::VecDeque;
+
+#[cfg(test)]
+use super::super::ast::BinaryOperation;
 use super::*;
 
-use std::collections::HashSet;
-
 use enum_iterator::all;
+
+fn make_vdq<T, I>(items: I) -> VecDeque<T>
+where
+    I: IntoIterator<Item = T>,
+{
+    items.into_iter().collect()
+}
 
 #[test]
 fn test_tokenize_word() {
@@ -140,12 +150,6 @@ fn test_parse_type_valid() {
 
 #[cfg(test)]
 fn verify_parse(input: &[&str], expected_starts: &[&str], expected_expr: &Expression) {
-    match tokenize_program(input) {
-        Ok(_) => (),
-        Err(e) => {
-            panic!("failed to tokenize input {input:?}: {e}");
-        }
-    }
     match parse_program(input) {
         Err(e) => {
             panic!("failed to parse {input:?}: {e}");
@@ -334,4 +338,100 @@ fn test_parse_program_false() {
         &["foo/"],
         &Expression::Just(Box::new(FalsePredicate {})),
     );
+}
+
+#[derive(Debug)]
+struct CommaReductionTestCase {
+    input: Vec<PartialCommaOnly>,
+    expected_output: Option<Expression>,
+}
+
+#[cfg(test)]
+fn test_comma_reduction(test_data: CommaReductionTestCase) {
+    let input_repr = format!("{:?}", &test_data.input);
+    let vdq = make_vdq(test_data.input);
+    match (reduce_comma_ops(vdq), test_data.expected_output) {
+        (Ok(got), Some(expected)) => {
+            let got_repr = format!("{got:?}");
+            let expected_repr = format!("{expected:?}");
+            if got_repr != expected_repr {
+                panic!("for input {input_repr}, expected output {expected_repr} but got output {got_repr}");
+            }
+        }
+        (Err(_), None) => (),
+        (Err(e), Some(expected)) => {
+            panic!(
+                "expected result {expected:?} for input {input_repr} but got error instead: {e}"
+            );
+        }
+        (Ok(got), None) => {
+            panic!("expected an error for input {input_repr} but got result instead: {got:?}");
+        }
+    }
+}
+
+#[test]
+fn test_reduce_comma_ops() {
+    // Verify the parsing of an empty expression.
+    test_comma_reduction(CommaReductionTestCase {
+        input: vec![],
+        expected_output: Some(make_default_print()),
+    });
+
+    // Verify the parsing of an expression containing just -print.
+    test_comma_reduction(CommaReductionTestCase {
+        input: vec![PartialCommaOnly::Expr(make_default_print())],
+        expected_output: Some(make_default_print()),
+    });
+
+    // Verify the parsing of -print , -print.
+    test_comma_reduction(CommaReductionTestCase {
+        input: vec![
+            PartialCommaOnly::Expr(make_default_print()),
+            PartialCommaOnly::Comma,
+            PartialCommaOnly::Expr(make_default_print()),
+        ],
+        expected_output: Some(Expression::BinaryOp(BinaryOperation::new(
+            BinaryOperationKind::Comma,
+            vec![make_default_print(), make_default_print()],
+        ))),
+    });
+
+    // Verify that a leading comma is an error.,
+    test_comma_reduction(CommaReductionTestCase {
+        input: vec![
+            PartialCommaOnly::Comma,
+            PartialCommaOnly::Expr(make_default_print()),
+        ],
+        expected_output: None,
+    });
+
+    // Verify that a trailing comma is an error.,
+    test_comma_reduction(CommaReductionTestCase {
+        input: vec![
+            PartialCommaOnly::Expr(make_default_print()),
+            PartialCommaOnly::Comma,
+        ],
+        expected_output: None,
+    });
+
+    // Verify that a lonely comma is an error.,
+    test_comma_reduction(CommaReductionTestCase {
+        input: vec![
+            PartialCommaOnly::Expr(make_default_print()),
+            PartialCommaOnly::Comma,
+        ],
+        expected_output: None,
+    });
+
+    // Verify that a double comma is an error.
+    test_comma_reduction(CommaReductionTestCase {
+        input: vec![
+            PartialCommaOnly::Expr(make_default_print()),
+            PartialCommaOnly::Comma,
+            PartialCommaOnly::Comma,
+            PartialCommaOnly::Expr(make_default_print()),
+        ],
+        expected_output: None,
+    });
 }
