@@ -57,7 +57,7 @@ pub fn parse_options<'a>(args: &'a [&'a str]) -> Result<(Options, &'a [&'a str])
     }
     let limit = opts.index() - if need_unshift { 1 } else { 0 };
     let opts = Options { traversal };
-    Ok((opts, &args[..limit]))
+    Ok((opts, &args[limit..]))
 }
 
 #[cfg(test)]
