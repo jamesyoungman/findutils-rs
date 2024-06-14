@@ -388,9 +388,58 @@ fn reduce_and_ops<'a>(
 }
 
 fn reduce_or_ops<'a>(
-    _input: VecDeque<PartialOrCommaOnly>,
+    mut input: VecDeque<PartialOrCommaOnly>,
 ) -> Result<VecDeque<PartialCommaOnly>, ParseError> {
-    todo!("write reduce_or_ops")
+    let mut output: VecDeque<PartialCommaOnly> = VecDeque::with_capacity(input.len());
+    let mut current_or_expression: Vec<Expression> = Vec::with_capacity(input.len());
+    let mut at_operator = false;
+
+    fn shift_or_expression(
+        or_expression: Vec<Expression>,
+        output: &mut VecDeque<PartialCommaOnly>,
+    ) -> Vec<Expression> {
+        if !or_expression.is_empty() {
+            output.push_back(PartialCommaOnly::Expr(Expression::BinaryOp(
+                BinaryOperation::new(BinaryOperationKind::Or, or_expression),
+            )));
+            Vec::new()
+        } else {
+            or_expression
+        }
+    }
+
+    while let Some(item) = input.pop_front() {
+        match item {
+            PartialOrCommaOnly::Expr(expression) => {
+                current_or_expression.push(expression);
+                at_operator = false;
+            }
+            PartialOrCommaOnly::Comma | PartialOrCommaOnly::Or if at_operator => {
+                if at_operator {
+                    return Err(ParseError(
+                        "operators must have an expression in between them".to_string(),
+                    ));
+                }
+            }
+            PartialOrCommaOnly::Or => {
+                at_operator = true;
+            }
+            PartialOrCommaOnly::Comma => {
+                if !current_or_expression.is_empty() {
+                    current_or_expression = shift_or_expression(current_or_expression, &mut output);
+                }
+                output.push_back(PartialCommaOnly::Comma);
+                at_operator = true;
+            }
+        }
+    }
+    if at_operator {
+        return Err(ParseError(
+            "expressions cannot end with an operator".to_string(),
+        ));
+    }
+    shift_or_expression(current_or_expression, &mut output);
+    Ok(output)
 }
 
 fn reduce_comma_ops<'a>(mut input: VecDeque<PartialCommaOnly>) -> Result<Expression, ParseError> {
