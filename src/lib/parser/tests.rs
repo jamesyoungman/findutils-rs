@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use super::super::ast::BinaryOperation;
 use super::*;
 
+mod and;
 mod comma;
 mod or;
 mod type_pred;

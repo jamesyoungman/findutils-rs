@@ -382,9 +382,79 @@ fn reduce_not_ops<'a>(
 }
 
 fn reduce_and_ops<'a>(
-    _input: VecDeque<PartialBinaryOpOnly>,
+    mut input: VecDeque<PartialBinaryOpOnly>,
 ) -> Result<VecDeque<PartialOrCommaOnly>, ParseError> {
-    todo!("write reduce_and_ops")
+    let mut output: VecDeque<PartialOrCommaOnly> = VecDeque::with_capacity(input.len());
+    let mut current_and_expression: Vec<Expression> = Vec::with_capacity(input.len());
+    let mut at_operator = false;
+
+    fn reduce_and_expression(
+        mut and_expression: Vec<Expression>,
+        output: &mut VecDeque<PartialOrCommaOnly>,
+    ) -> Vec<Expression> {
+        match and_expression.len() {
+            0 | 1 => {
+                if let Some(expr) = and_expression.pop() {
+                    output.push_back(PartialOrCommaOnly::Expr(expr));
+                }
+                and_expression
+            }
+            _ => {
+                output.push_back(PartialOrCommaOnly::Expr(Expression::BinaryOp(
+                    BinaryOperation::new(BinaryOperationKind::And, and_expression),
+                )));
+                Vec::new()
+            }
+        }
+    }
+
+    while let Some(item) = input.pop_front() {
+        match item {
+            PartialBinaryOpOnly::Expr(expression) => {
+                current_and_expression.push(expression);
+                at_operator = false;
+            }
+            PartialBinaryOpOnly::Op(_) if at_operator => {
+                return Err(ParseError(
+                    "operators must have an expression in between them".to_string(),
+                ));
+            }
+            PartialBinaryOpOnly::Op(op) => {
+                // Decide between a reduce operation (if the operation
+                // is -and) and a shift operation (for -or and ,).  If
+                // we need to shift a lower-precedence operator, then
+                // complete the reduction of any incomplete -and
+                // expression first, and shift the reduced expression.
+                let op_to_shift = match op {
+                    BinaryOperationKind::And => {
+                        if current_and_expression.is_empty() {
+                            return Err(ParseError(
+                                "expressions cannot start with -and".to_string(),
+                            ));
+                        }
+                        None
+                    }
+                    BinaryOperationKind::Or => Some(PartialOrCommaOnly::Or),
+                    BinaryOperationKind::Comma => Some(PartialOrCommaOnly::Comma),
+                };
+                if let Some(op) = op_to_shift {
+                    if !current_and_expression.is_empty() {
+                        current_and_expression =
+                            reduce_and_expression(current_and_expression, &mut output);
+                    }
+                    output.push_back(op);
+                }
+                at_operator = true;
+            }
+        }
+    }
+    if at_operator {
+        return Err(ParseError(
+            "expressions cannot end with an operator".to_string(),
+        ));
+    }
+    reduce_and_expression(current_and_expression, &mut output);
+    Ok(output)
 }
 
 fn reduce_or_ops<'a>(
@@ -421,11 +491,9 @@ fn reduce_or_ops<'a>(
                 at_operator = false;
             }
             PartialOrCommaOnly::Comma | PartialOrCommaOnly::Or if at_operator => {
-                if at_operator {
-                    return Err(ParseError(
-                        "operators must have an expression in between them".to_string(),
-                    ));
-                }
+                return Err(ParseError(
+                    "operators must have an expression in between them".to_string(),
+                ));
             }
             PartialOrCommaOnly::Or => {
                 if current_or_expression.is_empty() {
