@@ -1,8 +1,20 @@
-use std::fmt::Write;
+use std::error::Error;
+use std::fmt::{Display, Write};
 
 use getopt::{ErrorKind, Opt};
 
 use super::UsageError;
+
+#[derive(Debug)]
+pub struct InvalidOptionError(String);
+
+impl Display for InvalidOptionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Error for InvalidOptionError {}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum DebugOption {
@@ -50,14 +62,49 @@ pub struct Options {
     name_resolution: NameResolutionMode,
     depth_first: bool,
     debug_options: DebugOptions,
+    maxdepth: Option<i32>,
+    mindepth: i32,
 }
 
 impl Options {
-    pub fn apply(&mut self, opt: &GlobalOption) {
+    pub fn apply(&mut self, opt: GlobalOptionWithoutArg) {
         match opt {
-            GlobalOption::DepthFirst => {
+            GlobalOptionWithoutArg::DepthFirst => {
                 self.depth_first = true;
             }
+        }
+    }
+
+    pub fn apply_with_arg(
+        &mut self,
+        opt: GlobalOptionWithArg,
+        arg: &str,
+    ) -> Result<(), InvalidOptionError> {
+        match opt {
+            GlobalOptionWithArg::MaxDepth => match arg.parse() {
+                Ok(n) if n < 0 => Err(InvalidOptionError(
+                    "maximum depth must not be negative".to_string(),
+                )),
+                Ok(n) => {
+                    self.maxdepth = Some(n);
+                    Ok(())
+                }
+                Err(e) => Err(InvalidOptionError(format!(
+                    "invalid maximum depth {arg}: {e}"
+                ))),
+            },
+            GlobalOptionWithArg::MinDepth => match arg.parse() {
+                Ok(n) if n < 0 => Err(InvalidOptionError(
+                    "minimum depth must not be negative".to_string(),
+                )),
+                Ok(n) => {
+                    self.mindepth = n;
+                    Ok(())
+                }
+                Err(e) => Err(InvalidOptionError(format!(
+                    "invalid minimum depth {arg}: {e}"
+                ))),
+            },
         }
     }
 
@@ -84,6 +131,14 @@ impl Options {
     pub fn get_debug_option(&self, opt: &DebugOption) -> bool {
         self.debug_options.get(opt)
     }
+
+    pub fn mindepth(&self) -> i32 {
+        self.mindepth
+    }
+
+    pub fn maxdepth(&self) -> Option<i32> {
+        self.maxdepth
+    }
 }
 
 pub fn parse_options<'a>(args: &'a [&'a str]) -> Result<(Options, &'a [&'a str]), UsageError> {
@@ -94,7 +149,6 @@ pub fn parse_options<'a>(args: &'a [&'a str]) -> Result<(Options, &'a [&'a str])
     // return value, too.
     let args_for_opt_parser: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     let mut opts = getopt::Parser::new(&args_for_opt_parser, "HLPD:"); // E not yet implemented.
-    let mut need_unshift = false;
     let mut options = Options::default();
     // Process the leading options.
     loop {
@@ -139,15 +193,14 @@ pub fn parse_options<'a>(args: &'a [&'a str]) -> Result<(Options, &'a [&'a str])
                     // We benefit I suppose from the fact that none of
                     // the valid option letters is also the first
                     // character of a predicate.
-                    need_unshift = true;
+                    break;
                 } else {
                     return Err(UsageError(msg));
                 }
             }
         }
     }
-    let limit = opts.index() - if need_unshift { 1 } else { 0 };
-    Ok((options, &args[limit..]))
+    Ok((options, &args[opts.index()..]))
 }
 
 #[cfg(test)]
@@ -156,7 +209,8 @@ mod tests {
 
     fn parse_opt_vec<'a>(args: &'a [&'a str]) -> Result<(Options, &'a [&'a str]), UsageError> {
         assert!(args.len() > 0);
-        parse_options(&args)
+        dbg!(args);
+        dbg!(parse_options(&args))
     }
 
     #[test]
@@ -276,6 +330,29 @@ mod tests {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum GlobalOption {
+pub enum GlobalOptionWithoutArg {
     DepthFirst,
+}
+
+impl Display for GlobalOptionWithoutArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            GlobalOptionWithoutArg::DepthFirst => "-depth",
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum GlobalOptionWithArg {
+    MaxDepth,
+    MinDepth,
+}
+
+impl Display for GlobalOptionWithArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            GlobalOptionWithArg::MaxDepth => "-maxdepth",
+            GlobalOptionWithArg::MinDepth => "-mindepth",
+        })
+    }
 }

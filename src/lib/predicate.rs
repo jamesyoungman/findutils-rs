@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use super::ast::Predicate;
 use super::errors::{ParseError, PredicateFailure};
-use super::options::GlobalOption;
+use super::options::{GlobalOptionWithArg, GlobalOptionWithoutArg};
 
 #[derive(Debug)]
 pub struct PrintPredicate {}
@@ -132,11 +132,17 @@ impl Predicate for FalsePredicate {
 }
 
 #[derive(Debug)]
-pub struct GlobalOptionPlaceholder(GlobalOption);
+pub enum GlobalOptionPlaceholder {
+    WithoutArg(GlobalOptionWithoutArg),
+    WithArg(GlobalOptionWithArg, String),
+}
 
 impl GlobalOptionPlaceholder {
-    pub fn new(opt: GlobalOption) -> GlobalOptionPlaceholder {
-        GlobalOptionPlaceholder(opt)
+    pub fn without_arg(opt: GlobalOptionWithoutArg) -> GlobalOptionPlaceholder {
+        GlobalOptionPlaceholder::WithoutArg(opt)
+    }
+    pub fn with_arg(opt: GlobalOptionWithArg, arg: &str) -> GlobalOptionPlaceholder {
+        GlobalOptionPlaceholder::WithArg(opt, arg.to_string())
     }
 }
 
@@ -146,8 +152,11 @@ impl Predicate for GlobalOptionPlaceholder {
     }
 
     fn display_args<'a>(&self) -> Vec<Cow<'a, str>> {
-        match self.0 {
-            GlobalOption::DepthFirst => vec![Cow::from("-depth")],
+        match self {
+            GlobalOptionPlaceholder::WithoutArg(opt) => vec![Cow::from(format!("{opt}"))],
+            GlobalOptionPlaceholder::WithArg(opt, arg) => {
+                vec![Cow::from(format!("{opt}")), Cow::from(arg.to_string())]
+            }
         }
     }
 

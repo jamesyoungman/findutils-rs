@@ -1,5 +1,5 @@
 use fts::fts::fts_option::Flags;
-use fts::fts::{Fts, FtsError, FtsInfo};
+use fts::fts::{Fts, FtsError};
 
 use findlib::{parse_options, parse_program, visit, NameResolutionMode, UsageError};
 
@@ -45,14 +45,19 @@ fn run(args: Vec<String>) -> i32 {
             };
             let mut result = 0;
             while let Some(entry) = fts.read() {
-                if entry.info == FtsInfo::IsDirPost && !options.depth_first() {
-                    continue;
-                } else if entry.info == FtsInfo::IsDir && options.depth_first() {
-                    continue;
-                }
-                if let Err(e) = visit(&program, &entry) {
-                    eprintln!("error: {e}");
-                    result = 1;
+                match visit(&program, &entry, &options) {
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        result = 1;
+                    }
+                    Ok(None) => (),
+                    Ok(Some(set_option)) => {
+                        if let Err(e) = fts.set(&entry, set_option) {
+                            eprintln!("fts_set failed: {e:?}");
+                            result = 1;
+                            break;
+                        }
+                    }
                 }
             }
             result

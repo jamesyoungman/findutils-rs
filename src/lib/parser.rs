@@ -3,186 +3,23 @@ mod tests;
 
 use std::collections::VecDeque;
 
-use std::fmt::Display;
+mod lexer;
 
 use crate::ast::BinaryOperation;
 
 use super::ast::BoxedPredicate;
 use super::ast::{BinaryOperationKind, Expression, Predicate};
 use super::errors::ParseError;
-use super::options::{DebugOption, GlobalOption, Options};
+use super::options::{DebugOption, GlobalOptionWithArg, GlobalOptionWithoutArg, Options};
 use super::predicate::*;
+use lexer::*;
 
-use enum_iterator::Sequence;
-
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
-enum Arity {
-    Zero, // e.g. -print
-    One,  // e.g. -name, -type
+fn global_option_placeholder_without_arg(opt: GlobalOptionWithoutArg) -> Expression {
+    Expression::Just(Box::new(GlobalOptionPlaceholder::without_arg(opt)))
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy, Sequence, Hash)]
-enum PredicateToken {
-    False,
-    Print,
-    True,
-    Type,
-}
-
-impl PredicateToken {
-    pub fn arity(&self) -> Arity {
-        use Arity::*;
-        use PredicateToken::*;
-        match self {
-            False | Print | True => Zero,
-            Type => One,
-        }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
-enum OperatorToken {
-    Binary(BinaryOperationKind),
-    Not,
-}
-
-impl Display for OperatorToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OperatorToken::Binary(kind) => write!(f, "{}", kind),
-            OperatorToken::Not => f.write_str("!"),
-        }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Clone, Copy, Sequence, Hash)]
-enum Parenthesis {
-    Left,
-    Right,
-}
-
-#[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
-enum TokenType {
-    Pred(PredicateToken),
-    Op(OperatorToken),
-    Paren(Parenthesis),
-    GlobalOpt(GlobalOption),
-}
-
-fn tokenize_word(s: &str) -> Result<TokenType, ParseError> {
-    use BinaryOperationKind::*;
-    match s {
-        "-depth" => Ok(TokenType::GlobalOpt(GlobalOption::DepthFirst)),
-        "-print" => Ok(TokenType::Pred(PredicateToken::Print)),
-        "-true" => Ok(TokenType::Pred(PredicateToken::True)),
-        "-false" => Ok(TokenType::Pred(PredicateToken::False)),
-        "-type" => Ok(TokenType::Pred(PredicateToken::Type)),
-        "(" => Ok(TokenType::Paren(Parenthesis::Left)),
-        ")" => Ok(TokenType::Paren(Parenthesis::Right)),
-        "!" | "-not" => Ok(TokenType::Op(OperatorToken::Not)),
-        "-and" | "-a" => Ok(TokenType::Op(OperatorToken::Binary(And))),
-        "-or" | "-o" => Ok(TokenType::Op(OperatorToken::Binary(Or))),
-        "," => Ok(TokenType::Op(OperatorToken::Binary(Comma))),
-        _ => Err(ParseError(format!("unknown token {s}"))),
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PredOrSyntax<'a> {
-    Predicate {
-        token_type: PredicateToken,
-        arg: Option<&'a str>,
-    },
-    Op(OperatorToken),
-    Paren(Parenthesis),
-    GlobalOpt(GlobalOption),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum CommandLineItem<'a> {
-    StartingPoint(&'a str),
-    Code(PredOrSyntax<'a>),
-    GlobalOption(GlobalOption),
-}
-
-fn tokenize_next_item<'a>(
-    input: &mut &'a [&'a str],
-) -> Result<Option<CommandLineItem<'a>>, ParseError> {
-    let mut pop_arg = || -> Option<&str> {
-        match input {
-            [first, rest @ ..] => {
-                *input = rest;
-                Some(first)
-            }
-            [] => None,
-        }
-    };
-
-    if let Some(orig_token) = pop_arg() {
-        match tokenize_word(orig_token) {
-            Err(e) => {
-                if orig_token.starts_with('-') {
-                    return Err(e);
-                } else {
-                    Ok(Some(CommandLineItem::StartingPoint(orig_token)))
-                }
-            }
-            Ok(TokenType::Pred(pred_tok)) => match pred_tok.arity() {
-                Arity::Zero => Ok(Some(CommandLineItem::Code(PredOrSyntax::Predicate {
-                    token_type: pred_tok,
-                    arg: None,
-                }))),
-                Arity::One => match pop_arg() {
-                    Some(arg) => Ok(Some(CommandLineItem::Code(PredOrSyntax::Predicate {
-                        token_type: pred_tok,
-                        arg: Some(arg),
-                    }))),
-                    None => Err(ParseError(format!(
-                        "predicate {orig_token} takes an argument but one was not specified"
-                    ))),
-                },
-            },
-            Ok(TokenType::Op(op)) => Ok(Some(CommandLineItem::Code(PredOrSyntax::Op(op)))),
-            Ok(TokenType::Paren(side)) => {
-                Ok(Some(CommandLineItem::Code(PredOrSyntax::Paren(side))))
-            }
-            Ok(TokenType::GlobalOpt(option)) => Ok(Some(CommandLineItem::GlobalOption(option))),
-        }
-    } else {
-        Ok(None) // end of input
-    }
-}
-
-#[cfg(test)]
-fn tokenize_single_predicate<'a>(
-    mut input: &'a [&'a str],
-) -> Result<Option<(PredicateToken, Option<&'a str>)>, ParseError> {
-    match tokenize_next_item(&mut input) {
-        Err(e) => Err(e),
-        Ok(Some(CommandLineItem::Code(PredOrSyntax::Predicate { token_type, arg }))) => {
-            let result = Some((token_type, arg));
-            // Check that we have exhausted the input.
-            match tokenize_next_item(&mut input) {
-                Err(e) => panic!("unexpected parse error {e}"),
-                Ok(None) => (),
-                Ok(Some(parsed)) => {
-                    panic!("input should include only one item, but we saw {parsed:?} at the end");
-                }
-            }
-            Ok(result)
-        }
-        Ok(Some(CommandLineItem::StartingPoint(here))) => {
-            panic!("input token {here:?} could not be parsed as a predicate");
-        }
-        Ok(None) => Ok(None),
-        other => {
-            panic!("input {input:?} should have been parsed as predicates only, but appears to contain {other:?}");
-        }
-    }
-}
-
-fn global_option_placeholder(opt: GlobalOption) -> Expression {
-    Expression::Just(Box::new(GlobalOptionPlaceholder::new(opt)))
+fn global_option_placeholder_with_arg(opt: GlobalOptionWithArg, arg: &str) -> Expression {
+    Expression::Just(Box::new(GlobalOptionPlaceholder::with_arg(opt, arg)))
 }
 
 fn just(t: PredicateToken, arg: Option<&str>) -> Result<Expression, ParseError> {
@@ -190,7 +27,7 @@ fn just(t: PredicateToken, arg: Option<&str>) -> Result<Expression, ParseError> 
         Box::new(p)
     }
 
-    use PredicateToken::*;
+    use lexer::PredicateToken::*;
     let b: BoxedPredicate = match (t, arg) {
         (False, None) => mb(FalsePredicate {}),
         (False, _) => unreachable!(),
@@ -210,8 +47,12 @@ fn just(t: PredicateToken, arg: Option<&str>) -> Result<Expression, ParseError> 
     Ok(Expression::Just(b))
 }
 
-fn make_default_print() -> Expression {
+fn print_expr() -> Expression {
     Expression::Just(Box::new(PrintPredicate::new()))
+}
+
+pub fn make_default_print() -> Expression {
+    print_expr()
 }
 
 #[derive(Debug)]
@@ -606,9 +447,12 @@ fn reduce_predicates<'a>(
             PredOrSyntax::Predicate { token_type, arg } => {
                 Ok(PartialNoPredicates::Expr(just(*token_type, *arg)?))
             }
-            PredOrSyntax::GlobalOpt(gopt) => {
-                Ok(PartialNoPredicates::Expr(global_option_placeholder(*gopt)))
-            }
+            PredOrSyntax::GlobalOptWithoutArg(gopt) => Ok(PartialNoPredicates::Expr(
+                global_option_placeholder_without_arg(*gopt),
+            )),
+            PredOrSyntax::GlobalOptWithArg(gopt, arg) => Ok(PartialNoPredicates::Expr(
+                global_option_placeholder_with_arg(*gopt, arg),
+            )),
         }
     }
 
@@ -631,7 +475,7 @@ pub fn parse_program<'a, 'b>(
         let orig_input = input;
         let mut predicates: Vec<PredOrSyntax> = Vec::with_capacity(input.len());
         let mut end_of_starting_points: usize = 0;
-        while let Some(item) = tokenize_next_item(&mut input)? {
+        while let Some(item) = lexer::tokenize_next_item(&mut input)? {
             match item {
                 CommandLineItem::StartingPoint(arg) => {
                     if predicates.is_empty() {
@@ -640,9 +484,15 @@ pub fn parse_program<'a, 'b>(
                         return Err(ParseError(format!("{arg} is not a valid predicate")));
                     }
                 }
-                CommandLineItem::GlobalOption(option) => {
-                    options.apply(&option);
-                    predicates.push(PredOrSyntax::GlobalOpt(option));
+                CommandLineItem::GlobalOption0(option) => {
+                    options.apply(option);
+                    predicates.push(PredOrSyntax::GlobalOptWithoutArg(option));
+                }
+                CommandLineItem::GlobalOption1(option, arg) => {
+                    options.apply_with_arg(option, arg).map_err(|e| {
+                        ParseError(format!("option {option} has invalid argument {arg}: {e}"))
+                    })?;
+                    predicates.push(PredOrSyntax::GlobalOptWithArg(option, arg));
                 }
                 CommandLineItem::Code(pred) => {
                     predicates.push(pred);

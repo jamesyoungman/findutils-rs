@@ -1,7 +1,33 @@
-use super::*;
+use super::super::super::ast::{BinaryOperation, BinaryOperationKind, Expression};
+use super::super::super::options::{GlobalOptionWithoutArg, Options};
+use super::super::super::parser::{make_default_print, print_expr};
+use super::super::super::predicate::{
+    FalsePredicate, GlobalOptionPlaceholder, PrintPredicate, TruePredicate, TypePredicate,
+};
+use super::super::parse_program;
+
+#[cfg(test)]
+fn verify_parse_and_options(
+    input: &[&str],
+    expected_starts: &[&str],
+    expected_expr: &Expression,
+    options: &Options,
+) {
+    verify_parse_and_maybe_options(input, expected_starts, expected_expr, Some(options));
+}
 
 #[cfg(test)]
 fn verify_parse(input: &[&str], expected_starts: &[&str], expected_expr: &Expression) {
+    verify_parse_and_maybe_options(input, expected_starts, expected_expr, None);
+}
+
+#[cfg(test)]
+fn verify_parse_and_maybe_options(
+    input: &[&str],
+    expected_starts: &[&str],
+    expected_expr: &Expression,
+    expected_options: Option<&Options>,
+) {
     let mut options = Options::default();
     match parse_program(input, &mut options) {
         Err(e) => {
@@ -16,11 +42,9 @@ fn verify_parse(input: &[&str], expected_starts: &[&str], expected_expr: &Expres
             }
         }
     }
-}
-
-#[cfg(test)]
-fn print_expr() -> Expression {
-    Expression::Just(Box::new(PrintPredicate::new()))
+    if let Some(expected) = expected_options {
+        assert_eq!(&options, expected);
+    }
 }
 
 #[cfg(test)]
@@ -37,69 +61,80 @@ fn test_empty() {
 
 #[test]
 fn test_explicit_start() {
-    verify_parse(
+    verify_parse_and_options(
         &[".", "-print"],
         &["."],
         &Expression::Just(Box::new(PrintPredicate::new())),
+        &Options::default(),
     );
 
-    verify_parse(&["foo/", "-print"], &["foo/"], &print_expr());
+    verify_parse_and_options(
+        &["foo/", "-print"],
+        &["foo/"],
+        &print_expr(),
+        &Options::default(),
+    );
 }
 
 #[test]
 fn test_missing_start() {
-    verify_parse(
+    verify_parse_and_options(
         &["-print"],
         // We no longer have the parser emit a default starting point;
         // instead we take care of that at the top level (in the
         // binary).
         &[],
         &Expression::Just(Box::new(PrintPredicate::new())),
+        &Options::default(),
     );
 }
 
 #[test]
 fn test_binary_op_and() {
-    verify_parse(
+    verify_parse_and_options(
         &["foo/", "-print", "-a", "-print"],
         &["foo/"],
         &Expression::BinaryOp(BinaryOperation::new(
             BinaryOperationKind::And,
             vec![print_expr(), print_expr()],
         )),
+        &Options::default(),
     );
 
-    verify_parse(
+    verify_parse_and_options(
         &["foo/", "-print", "-and", "-print"],
         &["foo/"],
         &Expression::BinaryOp(BinaryOperation::new(
             BinaryOperationKind::And,
             vec![print_expr(), print_expr()],
         )),
+        &Options::default(),
     );
 }
 
 #[test]
 fn test_binary_op_or_symmetrical() {
-    verify_parse(
+    verify_parse_and_options(
         &["foo/", "-print", "-o", "-print"],
         &["foo/"],
         &Expression::BinaryOp(BinaryOperation::new(
             BinaryOperationKind::Or,
             vec![print_expr(), print_expr()],
         )),
+        &Options::default(),
     );
 }
 
 #[test]
 fn test_binary_op_or_asymmetric() {
-    verify_parse(
+    verify_parse_and_options(
         &["foo/", "-type", "f", "-o", "-print"],
         &["foo/"],
         &Expression::BinaryOp(BinaryOperation::new(
             BinaryOperationKind::Or,
             vec![type_expr("f"), print_expr()],
         )),
+        &Options::default(),
     );
 }
 
@@ -108,7 +143,7 @@ fn test_binary_op_precedence() {
     // TODO: verify "x -o -y -o z" once we can actually parse that as
     // an operation with 3 children instead of two binary operations.
 
-    verify_parse(
+    verify_parse_and_options(
         &["foo/", "-print", "-o", "-print", "-a", "-print"],
         &["foo/"],
         &Expression::BinaryOp(BinaryOperation::new(
@@ -121,20 +156,27 @@ fn test_binary_op_precedence() {
                 )),
             ],
         )),
+        &Options::default(),
     );
 }
 
 #[test]
 fn test_parens_trivial_case() {
-    verify_parse(&["foo/", "(", "-print", ")"], &["foo/"], &print_expr());
+    verify_parse_and_options(
+        &["foo/", "(", "-print", ")"],
+        &["foo/"],
+        &print_expr(),
+        &Options::default(),
+    );
 }
 
 #[test]
 fn test_parens_nested() {
-    verify_parse(
+    verify_parse_and_options(
         &["foo/", "(", "(", "-print", ")", ")"],
         &["foo/"],
         &print_expr(),
+        &Options::default(),
     );
 }
 
@@ -207,9 +249,9 @@ fn test_false() {
 #[test]
 fn test_type_invalid() {
     let test_inputs: Vec<Vec<&str>> = vec![
-        vec!["-type"],       // invalid because missing argument
-        vec!["-typeZ", "f"], // invalid because not actually -type
-        vec!["-type", "q"],  // invalid argument
+        vec!["find", "-type"],       // invalid because missing argument
+        vec!["find", "-typeZ", "f"], // invalid because not actually -type
+        vec!["find", "-type", "q"],  // invalid argument
     ];
     for input in test_inputs {
         let mut options = Options::default();
@@ -224,17 +266,76 @@ fn test_type_invalid() {
 
 #[test]
 fn test_depth_option() {
-    verify_parse(
+    let mut expected_options = Options::default();
+    expected_options.apply(GlobalOptionWithoutArg::DepthFirst);
+    verify_parse_and_options(
         &["foo/", "-depth"],
         &["foo/"],
         &Expression::BinaryOp(BinaryOperation::new(
             BinaryOperationKind::And,
             vec![
-                Expression::Just(Box::new(GlobalOptionPlaceholder::new(
-                    GlobalOption::DepthFirst,
+                Expression::Just(Box::new(GlobalOptionPlaceholder::without_arg(
+                    GlobalOptionWithoutArg::DepthFirst,
                 ))),
                 make_default_print(),
             ],
         )),
+        &expected_options,
     );
+}
+
+#[test]
+fn parse_otions_with_invalid_negative_mindepth() {
+    let mut options = Options::default();
+    match parse_program(&["find", "-mindepth", "-1", "-print"], &mut options) {
+        Err(e) => {
+            dbg!(&e);
+            assert!(e.to_string().contains("negative"));
+        }
+        Ok(result) => {
+            panic!("parse should have failed but it returned {:?}", result);
+        }
+    }
+}
+
+#[test]
+fn parse_options_with_invalid_nonnumeric_mindepth() {
+    let mut options = Options::default();
+    match parse_program(&["find", "-mindepth", "BAD", "-print"], &mut options) {
+        Err(e) => {
+            dbg!(&e);
+            assert!(e.to_string().contains("BAD"));
+        }
+        Ok(result) => {
+            panic!("parse should have failed but it returned {:?}", result);
+        }
+    }
+}
+
+#[test]
+fn parse_options_with_invalid_negative_maxdepth() {
+    let mut options = Options::default();
+    match parse_program(&["find", "-maxdepth", "-1", "-print"], &mut options) {
+        Err(e) => {
+            dbg!(&e);
+            assert!(e.to_string().contains("negative"));
+        }
+        Ok(result) => {
+            panic!("parse should have failed but it returned {:?}", result);
+        }
+    }
+}
+
+#[test]
+fn parse_options_with_invalid_nonnumeric_maxdepth() {
+    let mut options = Options::default();
+    match parse_program(&["find", "-maxdepth", "FOO", "-print"], &mut options) {
+        Err(e) => {
+            dbg!(&e);
+            assert!(e.to_string().contains("FOO"));
+        }
+        Ok(result) => {
+            panic!("parse should have failed but it returned {:?}", result);
+        }
+    }
 }

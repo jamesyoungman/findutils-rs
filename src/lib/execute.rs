@@ -1,8 +1,9 @@
-use fts::fts::{FtsEntry, FtsInfo};
+use fts::fts::{FtsEntry, FtsInfo, FtsSetOption};
 use std::borrow::Cow;
 
 use super::ast::{BinaryOperation, BinaryOperationKind, Expression, Predicate, Target};
 use super::errors::PredicateFailure;
+use super::options::Options;
 
 impl Predicate for BinaryOperation {
     fn eval(&self, target: &Target) -> Result<bool, PredicateFailure> {
@@ -42,14 +43,40 @@ impl Predicate for BinaryOperation {
     }
 }
 
-pub fn visit(prog: &Expression, entry: &FtsEntry) -> Result<(), PredicateFailure> {
+pub fn visit(
+    prog: &Expression,
+    entry: &FtsEntry,
+    options: &Options,
+) -> Result<Option<FtsSetOption>, PredicateFailure> {
+    if entry.level < options.mindepth() {
+        // Don't set the skip option, because we still want to visit
+        // its descendants.
+        return Ok(None);
+    }
     match entry.info {
-        FtsInfo::IsDirPost => {
+        FtsInfo::IsDirPost if !options.depth_first() => {
             // TODO: we will probably need to use this case to
             // complete any pending executions for -execdir.
-            Ok(())
+            return Ok(None);
         }
-        FtsInfo::IsNoStat => Err(PredicateFailure::StatFailed(entry.path.to_path_buf())),
-        _ => prog.eval(entry).map(|_| ()),
+        FtsInfo::IsDir if options.depth_first() => {
+            return Ok(None);
+        }
+        FtsInfo::IsNoStat => {
+            return Err(PredicateFailure::StatFailed(entry.path.to_path_buf()));
+        }
+        _ => {
+            prog.eval(entry)?;
+        }
+    }
+    if let Some(limit) = options.maxdepth() {
+        if entry.level >= limit {
+            // Skip the children of this entry.
+            Ok(Some(FtsSetOption::Skip))
+        } else {
+            Ok(None)
+        }
+    } else {
+        Ok(None)
     }
 }

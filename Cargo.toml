@@ -5,6 +5,7 @@ edition = "2021"
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }
+tempdir = "0.3"
 
 [dependencies]
 fts = "0.3"
