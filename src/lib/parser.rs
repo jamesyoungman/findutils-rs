@@ -15,9 +15,6 @@ use super::predicate::*;
 
 use enum_iterator::Sequence;
 
-/// We could represent Arity as u32 but we want to structure parts of
-/// the code so that we can be sure that all possible arity values are
-/// covered.  Therefore we make it an enum.
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 enum Arity {
     Zero, // e.g. -print

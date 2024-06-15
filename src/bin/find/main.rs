@@ -1,17 +1,13 @@
 use fts::fts::fts_option::Flags;
 use fts::fts::{Fts, FtsError, FtsInfo};
 
-use findlib::{
-    options::{parse_options, NameResolutionMode},
-    parser, visit, UsageError,
-};
+use findlib::{parse_options, parse_program, visit, NameResolutionMode, UsageError};
 
 fn run(args: Vec<String>) -> i32 {
     let parser_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     match parse_options(&parser_args) {
         Ok((mut options, remaining_args)) => {
-            let (start_points, program) = match parser::parse_program(remaining_args, &mut options)
-            {
+            let (start_points, program) = match parse_program(remaining_args, &mut options) {
                 Ok((start, program)) => (start, program),
                 Err(e) => {
                     eprintln!("parse error: {}", e);
