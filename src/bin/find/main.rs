@@ -1,10 +1,10 @@
 use fts::fts::fts_option::Flags;
 use fts::fts::{Fts, FtsError};
 
-mod options;
-
-use findlib::{parser, visit, UsageError};
-use options::{parse_options, TraversalMode};
+use findlib::{
+    options::{parse_options, NameResolutionMode},
+    parser, visit, UsageError,
+};
 
 fn run(args: Vec<String>) -> i32 {
     let parser_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -23,10 +23,10 @@ fn run(args: Vec<String>) -> i32 {
             // set Flags::XDEV.  But see the (somewhat) recent
             // comments from the Austin group about the distinction
             // between -mount and -xdev.
-            ftsflags.insert(match options.traversal {
-                TraversalMode::P => Flags::PHYSICAL,
-                TraversalMode::L => Flags::LOGICAL,
-                TraversalMode::H => Flags::COMFOLLOW,
+            ftsflags.insert(match options.name_resolution {
+                NameResolutionMode::P => Flags::PHYSICAL,
+                NameResolutionMode::L => Flags::LOGICAL,
+                NameResolutionMode::H => Flags::COMFOLLOW,
             });
             let start_points = {
                 let mut v: Vec<String> = start_points.into_iter().map(|s| s.to_string()).collect();

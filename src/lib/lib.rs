@@ -1,6 +1,7 @@
 mod ast;
 mod errors;
 mod execute;
+pub mod options;
 pub mod parser;
 mod predicate;
 
