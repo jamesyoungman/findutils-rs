@@ -10,7 +10,7 @@ use crate::ast::BinaryOperation;
 use super::ast::BoxedPredicate;
 use super::ast::{BinaryOperationKind, Expression, Predicate};
 use super::errors::ParseError;
-use super::options::{GlobalOption, Options};
+use super::options::{DebugOption, GlobalOption, Options};
 use super::predicate::*;
 
 use enum_iterator::Sequence;
@@ -686,5 +686,9 @@ pub fn parse_program<'a, 'b>(
             }
         }
     };
+
+    if options.get_debug_option(&DebugOption::Tree) {
+        eprintln!("Parsed expression:\n{expr:?}");
+    }
     Ok((starting_points, expr))
 }
