@@ -2,7 +2,8 @@ use super::*;
 
 #[cfg(test)]
 fn verify_parse(input: &[&str], expected_starts: &[&str], expected_expr: &Expression) {
-    match parse_program(input) {
+    let mut options = Options::default();
+    match parse_program(input, &mut options) {
         Err(e) => {
             panic!("failed to parse {input:?}: {e}");
         }
@@ -178,7 +179,13 @@ fn test_true() {
     verify_parse(
         &["foo/", "-true"],
         &["foo/"],
-        &Expression::Just(Box::new(TruePredicate {})),
+        &Expression::BinaryOp(BinaryOperation::new(
+            BinaryOperationKind::And,
+            vec![
+                Expression::Just(Box::new(TruePredicate {})),
+                make_default_print(),
+            ],
+        )),
     );
 }
 
@@ -187,7 +194,13 @@ fn test_false() {
     verify_parse(
         &["foo/", "-false"],
         &["foo/"],
-        &Expression::Just(Box::new(FalsePredicate {})),
+        &Expression::BinaryOp(BinaryOperation::new(
+            BinaryOperationKind::And,
+            vec![
+                Expression::Just(Box::new(FalsePredicate {})),
+                make_default_print(),
+            ],
+        )),
     );
 }
 
@@ -199,11 +212,29 @@ fn test_type_invalid() {
         vec!["-type", "q"],  // invalid argument
     ];
     for input in test_inputs {
-        match parse_program(input.as_slice()) {
+        let mut options = Options::default();
+        match parse_program(input.as_slice(), &mut options) {
             Err(_) => (), // as excpted
             Ok(out) => {
                 panic!("parsed invalid input {input:?} but unexpectedly got valid result {out:?}");
             }
         }
     }
+}
+
+#[test]
+fn test_depth_option() {
+    verify_parse(
+        &["foo/", "-depth"],
+        &["foo/"],
+        &Expression::BinaryOp(BinaryOperation::new(
+            BinaryOperationKind::And,
+            vec![
+                Expression::Just(Box::new(GlobalOptionPlaceholder::new(
+                    GlobalOption::DepthFirst,
+                ))),
+                make_default_print(),
+            ],
+        )),
+    );
 }

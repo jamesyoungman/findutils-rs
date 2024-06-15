@@ -10,6 +10,7 @@ use crate::ast::BinaryOperation;
 use super::ast::BoxedPredicate;
 use super::ast::{BinaryOperationKind, Expression, Predicate};
 use super::errors::ParseError;
+use super::options::{GlobalOption, Options};
 use super::predicate::*;
 
 use enum_iterator::Sequence;
@@ -68,11 +69,13 @@ enum TokenType {
     Pred(PredicateToken),
     Op(OperatorToken),
     Paren(Parenthesis),
+    GlobalOpt(GlobalOption),
 }
 
 fn tokenize_word(s: &str) -> Result<TokenType, ParseError> {
     use BinaryOperationKind::*;
     match s {
+        "-depth" => Ok(TokenType::GlobalOpt(GlobalOption::DepthFirst)),
         "-print" => Ok(TokenType::Pred(PredicateToken::Print)),
         "-true" => Ok(TokenType::Pred(PredicateToken::True)),
         "-false" => Ok(TokenType::Pred(PredicateToken::False)),
@@ -95,12 +98,14 @@ enum PredOrSyntax<'a> {
     },
     Op(OperatorToken),
     Paren(Parenthesis),
+    GlobalOpt(GlobalOption),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CommandLineItem<'a> {
     StartingPoint(&'a str),
     Code(PredOrSyntax<'a>),
+    GlobalOption(GlobalOption),
 }
 
 fn tokenize_next_item<'a>(
@@ -144,6 +149,7 @@ fn tokenize_next_item<'a>(
             Ok(TokenType::Paren(side)) => {
                 Ok(Some(CommandLineItem::Code(PredOrSyntax::Paren(side))))
             }
+            Ok(TokenType::GlobalOpt(option)) => Ok(Some(CommandLineItem::GlobalOption(option))),
         }
     } else {
         Ok(None) // end of input
@@ -176,6 +182,10 @@ fn tokenize_single_predicate<'a>(
             panic!("input {input:?} should have been parsed as predicates only, but appears to contain {other:?}");
         }
     }
+}
+
+fn global_option_placeholder(opt: GlobalOption) -> Expression {
+    Expression::Just(Box::new(GlobalOptionPlaceholder::new(opt)))
 }
 
 fn just(t: PredicateToken, arg: Option<&str>) -> Result<Expression, ParseError> {
@@ -266,11 +276,17 @@ fn reduce_paren_expressions<'a>(
                     // expression and push it onto the end of the
                     // still-open parenthesis expression which
                     // encloses it.
-                    let expr = parse_noparen_expression(items)?;
-                    output
-                        .last_mut()
-                        .unwrap()
-                        .push_back(PartialNoParens::Expr(expr));
+                    match parse_noparen_expression(items)? {
+                        Some(expr) => {
+                            output
+                                .last_mut()
+                                .unwrap()
+                                .push_back(PartialNoParens::Expr(expr));
+                        }
+                        None => {
+                            return Err(ParseError("empty parentheses".to_string()));
+                        }
+                    }
                 }
                 None => unreachable!(),
             },
@@ -500,7 +516,9 @@ fn reduce_or_ops<'a>(
     Ok(output)
 }
 
-fn reduce_comma_ops<'a>(mut input: VecDeque<PartialCommaOnly>) -> Result<Expression, ParseError> {
+fn reduce_comma_ops<'a>(
+    mut input: VecDeque<PartialCommaOnly>,
+) -> Result<Option<Expression>, ParseError> {
     let mut expressions: Vec<Expression> = Vec::with_capacity(input.len());
     let mut at_comma = false;
     while let Some(item) = input.pop_front() {
@@ -550,8 +568,7 @@ fn reduce_comma_ops<'a>(mut input: VecDeque<PartialCommaOnly>) -> Result<Express
             }
         })
     }
-
-    Ok(build_comma_or_direct_expression(expressions).unwrap_or_else(make_default_print))
+    Ok(build_comma_or_direct_expression(expressions))
 }
 
 #[derive(Debug)]
@@ -564,13 +581,17 @@ enum PartialNoPredicates {
 
 // parse expression parses the expression as a whole and, recursively,
 // the contents of parenthesised expressions.
-fn parse_expression(input: VecDeque<PartialNoPredicates>) -> Result<Expression, ParseError> {
+fn parse_expression(
+    input: VecDeque<PartialNoPredicates>,
+) -> Result<Option<Expression>, ParseError> {
     reduce_paren_expressions(input).and_then(parse_noparen_expression)
 }
 
 // parse expression parses the expression as a whole and, recursively,
 // the contents of parenthesised expressions.
-fn parse_noparen_expression(input: VecDeque<PartialNoParens>) -> Result<Expression, ParseError> {
+fn parse_noparen_expression(
+    input: VecDeque<PartialNoParens>,
+) -> Result<Option<Expression>, ParseError> {
     reduce_not_ops(input)
         .and_then(reduce_and_ops)
         .and_then(reduce_or_ops)
@@ -588,6 +609,9 @@ fn reduce_predicates<'a>(
             PredOrSyntax::Predicate { token_type, arg } => {
                 Ok(PartialNoPredicates::Expr(just(*token_type, *arg)?))
             }
+            PredOrSyntax::GlobalOpt(gopt) => {
+                Ok(PartialNoPredicates::Expr(global_option_placeholder(*gopt)))
+            }
         }
     }
 
@@ -599,10 +623,14 @@ fn reduce_predicates<'a>(
         })
 }
 
-pub fn parse_program<'a>(input: &'a [&'a str]) -> Result<(&'a [&'a str], Expression), ParseError> {
-    fn tokenize_program<'a>(
+pub fn parse_program<'a, 'b>(
+    input: &'a [&'a str],
+    options: &'b mut Options,
+) -> Result<(&'a [&'a str], Expression), ParseError> {
+    fn tokenize_program<'a, 'b>(
         mut input: &'a [&'a str],
-    ) -> Result<(&'a [&'a str], Vec<PredOrSyntax>), ParseError> {
+        options: &'b mut Options,
+    ) -> Result<(&'a [&'a str], Vec<PredOrSyntax<'a>>), ParseError> {
         let orig_input = input;
         let mut predicates: Vec<PredOrSyntax> = Vec::with_capacity(input.len());
         let mut end_of_starting_points: usize = 0;
@@ -614,6 +642,10 @@ pub fn parse_program<'a>(input: &'a [&'a str]) -> Result<(&'a [&'a str], Express
                     } else {
                         return Err(ParseError(format!("{arg} is not a valid predicate")));
                     }
+                }
+                CommandLineItem::GlobalOption(option) => {
+                    options.apply(&option);
+                    predicates.push(PredOrSyntax::GlobalOpt(option));
                 }
                 CommandLineItem::Code(pred) => {
                     predicates.push(pred);
@@ -628,7 +660,7 @@ pub fn parse_program<'a>(input: &'a [&'a str]) -> Result<(&'a [&'a str], Express
     // points, and turn the remainder of the input words into tokens.
     // The tokenization process will group words together where they
     // are arguments belonging to a leading token.
-    let (starting_points, predicates) = tokenize_program(input)?;
+    let (starting_points, predicates) = tokenize_program(input, options)?;
 
     // Convert the tokens-with-arguments into a sequence of predicates
     // (representing things like "-type f") and punctuation
@@ -641,6 +673,18 @@ pub fn parse_program<'a>(input: &'a [&'a str]) -> Result<(&'a [&'a str], Express
 
     // Parse the program into a single expression and return it, with
     // the starting points.
-    let expr: Expression = parse_expression(no_predicates)?;
+    let expr: Expression = match parse_expression(no_predicates)? {
+        None => make_default_print(),
+        Some(expr) => {
+            if expr.inhibits_default_print() {
+                expr
+            } else {
+                Expression::BinaryOp(BinaryOperation::new(
+                    BinaryOperationKind::And,
+                    vec![expr, make_default_print()],
+                ))
+            }
+        }
+    };
     Ok((starting_points, expr))
 }

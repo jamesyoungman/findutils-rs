@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use super::ast::Predicate;
 use super::errors::{ParseError, PredicateFailure};
+use super::options::GlobalOption;
 
 #[derive(Debug)]
 pub struct PrintPredicate {}
@@ -123,6 +124,31 @@ impl Predicate for FalsePredicate {
 
     fn display_args<'a>(&self) -> Vec<Cow<'a, str>> {
         vec![Cow::from("-false")]
+    }
+
+    fn inhibits_default_print(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug)]
+pub struct GlobalOptionPlaceholder(GlobalOption);
+
+impl GlobalOptionPlaceholder {
+    pub fn new(opt: GlobalOption) -> GlobalOptionPlaceholder {
+        GlobalOptionPlaceholder(opt)
+    }
+}
+
+impl Predicate for GlobalOptionPlaceholder {
+    fn eval(&self, _target: &crate::ast::Target) -> Result<bool, PredicateFailure> {
+        Ok(true)
+    }
+
+    fn display_args<'a>(&self) -> Vec<Cow<'a, str>> {
+        match self.0 {
+            GlobalOption::DepthFirst => vec![Cow::from("-depth")],
+        }
     }
 
     fn inhibits_default_print(&self) -> bool {
