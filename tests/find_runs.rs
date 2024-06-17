@@ -230,3 +230,25 @@ fn run_find_maxdepth() -> Result<(), TestSetupError> {
     );
     Ok(())
 }
+
+#[test]
+fn run_find_true_print() -> Result<(), TestSetupError> {
+    let mut env = TestEnvironment::new("run_find")?;
+    let output = env.find(&["-maxdepth", "0", "-true", "-print"]).output()?;
+    assert_eq!(
+        &String::from_utf8(output.stdout).expect("output should be utf8"),
+        ".\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn run_find_false_print() -> Result<(), TestSetupError> {
+    let mut env = TestEnvironment::new("run_find")?;
+    let output = env.find(&["-maxdepth", "0", "-false", "-print"]).output()?;
+    assert_eq!(
+        &String::from_utf8(output.stdout).expect("output should be utf8"),
+        ""
+    );
+    Ok(())
+}
