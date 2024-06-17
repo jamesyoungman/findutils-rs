@@ -48,10 +48,7 @@ fn get_binary(name: &str) -> Result<PathBuf, TestSetupError> {
 
 trait TestInput {
     fn create(&self, parent: &Path) -> Result<(), std::io::Error>;
-}
-
-trait TestInputContainer {
-    fn with_children(&mut self, files: Vec<File>, folders: Vec<Folder>);
+    fn name(&self) -> &Path;
 }
 
 #[derive(Debug)]
@@ -94,11 +91,30 @@ impl TestEnvironment {
     }
 
     fn find(&mut self, args: &[&str]) -> &mut Command {
-        self.create_files();
+        if let Err(e) = self.create_files() {
+            panic!("Failed to create files for test setup: {e}");
+        }
         self.find.args(args)
     }
 
     fn with_children(&mut self, files: Vec<File>, folders: Vec<Folder>) -> &mut TestEnvironment {
+        for name in files
+            .iter()
+            .map(|file| file.name())
+            .chain(folders.iter().map(|folder| folder.name()))
+        {
+            match name.to_str() {
+                Some(name) => {
+                    if name.contains('/') {
+                        panic!("test file names should not contain '/': {name}");
+                    }
+                }
+                None => {
+                    // We could support this we just currently don't.
+                    panic!("test file name isn't value utf8");
+                }
+            }
+        }
         self.top_level_files.extend(files.into_iter());
         self.top_level_folders.extend(folders.into_iter());
         self
@@ -118,7 +134,6 @@ impl TestEnvironment {
 
 #[derive(Debug)]
 struct File {
-    parent: Option<PathBuf>,
     name: PathBuf,
     contents: Vec<u8>,
 }
@@ -126,7 +141,6 @@ struct File {
 impl From<(&str, &str)> for File {
     fn from((name, contents): (&str, &str)) -> File {
         File {
-            parent: None,
             name: PathBuf::from(name),
             contents: contents.as_bytes().to_owned(),
         }
@@ -139,11 +153,14 @@ impl TestInput for File {
         let contents: &[u8] = self.contents.as_ref();
         std::fs::write(&full_name, contents)
     }
+
+    fn name(&self) -> &Path {
+        &self.name
+    }
 }
 
 #[derive(Debug)]
 struct Folder {
-    parent: Option<PathBuf>,
     name: PathBuf,
     files: Vec<File>,
     subfolders: Vec<Folder>,
@@ -152,10 +169,17 @@ struct Folder {
 impl Folder {
     pub fn new(name: &str) -> Folder {
         Folder {
-            parent: None,
             name: PathBuf::from(name),
             files: vec![],
             subfolders: vec![],
+        }
+    }
+
+    pub fn new_with_children(name: &str, files: Vec<File>, subfolders: Vec<Folder>) -> Folder {
+        Folder {
+            name: PathBuf::from(name),
+            files,
+            subfolders,
         }
     }
 }
@@ -172,18 +196,32 @@ impl TestInput for Folder {
         }
         Ok(())
     }
+
+    fn name(&self) -> &Path {
+        &self.name
+    }
 }
 
-impl TestInputContainer for Folder {
-    fn with_children(&mut self, files: Vec<File>, folders: Vec<Folder>) {
-        self.files.extend(files.into_iter());
-        self.subfolders.extend(folders.into_iter());
+#[should_panic]
+#[test]
+fn test_environment_invalid_name() {
+    match TestEnvironment::new("test_environment_invalid_name") {
+        Ok(mut env) => {
+            env.with_children(vec![], vec![Folder::new("not/allowed")]);
+        }
+        Err(e) => {
+            // This is a should_panic test, so if we panic here the
+            // test will pass.  So to make the test fail, we need to
+            // return normally.   But we still need an error message
+            // to explain the problem.
+            eprintln!("test_environment_invalid_name: test environment could not be created: {e}");
+        }
     }
 }
 
 #[test]
 fn run_find_on_empty_dir() -> Result<(), TestSetupError> {
-    let mut env = TestEnvironment::new("run_find")?;
+    let mut env = TestEnvironment::new("run_find_on_empty_dir")?;
     let output = env.find(&[]).output()?;
     assert_eq!(&output.stdout, ".\n".as_bytes());
     Ok(())
@@ -191,7 +229,7 @@ fn run_find_on_empty_dir() -> Result<(), TestSetupError> {
 
 #[test]
 fn run_find_on_single_subdir() -> Result<(), TestSetupError> {
-    let mut env = TestEnvironment::new("run_find")?;
+    let mut env = TestEnvironment::new("run_find_on_single_subdir")?;
     let output = env
         .with_children(vec![], vec![Folder::new("only")])
         .find(&[])
@@ -205,7 +243,7 @@ fn run_find_on_single_subdir() -> Result<(), TestSetupError> {
 
 #[test]
 fn run_find_mindepth() -> Result<(), TestSetupError> {
-    let mut env = TestEnvironment::new("run_find")?;
+    let mut env = TestEnvironment::new("run_find_mindepth")?;
     let output = env
         .with_children(vec![], vec![Folder::new("only")])
         .find(&["-mindepth", "1"])
@@ -218,8 +256,8 @@ fn run_find_mindepth() -> Result<(), TestSetupError> {
 }
 
 #[test]
-fn run_find_maxdepth() -> Result<(), TestSetupError> {
-    let mut env = TestEnvironment::new("run_find")?;
+fn run_find_maxdepth_0() -> Result<(), TestSetupError> {
+    let mut env = TestEnvironment::new("run_find_maxdepth_0")?;
     let output = env
         .with_children(vec![], vec![Folder::new("only")])
         .find(&["-maxdepth", "0"])
@@ -232,8 +270,29 @@ fn run_find_maxdepth() -> Result<(), TestSetupError> {
 }
 
 #[test]
+fn run_find_maxdepth_1() -> Result<(), TestSetupError> {
+    let mut env = TestEnvironment::new("run_find_maxdepth_1")?;
+    let output = env
+        .with_children(
+            vec![],
+            vec![Folder::new_with_children(
+                "level1",
+                vec![],
+                vec![Folder::new("level2")],
+            )],
+        )
+        .find(&["-mindepth", "1", "-maxdepth", "1"])
+        .output()?;
+    assert_eq!(
+        &String::from_utf8(output.stdout).expect("output should be utf8"),
+        "./level1\n"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_find_true_print() -> Result<(), TestSetupError> {
-    let mut env = TestEnvironment::new("run_find")?;
+    let mut env = TestEnvironment::new("run_find_true_print")?;
     let output = env.find(&["-maxdepth", "0", "-true", "-print"]).output()?;
     assert_eq!(
         &String::from_utf8(output.stdout).expect("output should be utf8"),
@@ -244,7 +303,7 @@ fn run_find_true_print() -> Result<(), TestSetupError> {
 
 #[test]
 fn run_find_false_print() -> Result<(), TestSetupError> {
-    let mut env = TestEnvironment::new("run_find")?;
+    let mut env = TestEnvironment::new("run_find_false_print")?;
     let output = env.find(&["-maxdepth", "0", "-false", "-print"]).output()?;
     assert_eq!(
         &String::from_utf8(output.stdout).expect("output should be utf8"),
