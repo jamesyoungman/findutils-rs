@@ -2,16 +2,18 @@ use std::error::Error;
 use std::fmt::Display;
 use std::path::PathBuf;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PredicateFailure {
-    StatFailed(PathBuf),
+    // We retain the StatFailed error as a string because io::Error
+    // does not implement Clone.
+    StatFailed(PathBuf, String),
 }
 
 impl Display for PredicateFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PredicateFailure::StatFailed(name) => {
-                writeln!(f, "failed to stat {}", name.display())
+            PredicateFailure::StatFailed(name, e) => {
+                writeln!(f, "failed to stat {}: {e}", name.display())
             }
         }
     }

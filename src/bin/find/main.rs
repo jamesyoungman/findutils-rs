@@ -1,11 +1,31 @@
-use fts::fts::fts_option::Flags;
-use fts::fts::{Fts, FtsError};
+use std::ffi::{OsStr, OsString};
+use std::io::{stderr, Write};
 
-use findlib::{parse_options, parse_program, visit, NameResolutionMode, UsageError};
+use findlib::{new_source, parse_options, parse_program, visit, Source, UsageError, VisitOutcome};
 
-fn run(args: Vec<String>) -> i32 {
-    let parser_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    match parse_options(&parser_args) {
+fn run(args: Vec<OsString>) -> i32 {
+    let args: Vec<&OsStr> = args.iter().map(|s| s.as_os_str()).collect();
+    let mut parser_args: Vec<&str> = Vec::with_capacity(args.len());
+    for (i, arg) in args.iter().enumerate() {
+        match arg.to_str() {
+            Some(s) => {
+                parser_args.push(s);
+            }
+            None => {
+                let mut msg: Vec<u8> = Vec::new();
+                let _ = write!(&mut msg, "Command-line argument {i} (");
+                msg.extend(arg.as_encoded_bytes());
+                let _ = write!(
+                    &mut msg,
+                    ") is not valid UTF-8 and processing such arguments is not yet implemented."
+                );
+                let _ = stderr().write_all(&msg);
+                return 1;
+            }
+        }
+    }
+
+    match parse_options(&args, &parser_args) {
         Ok((mut options, remaining_args)) => {
             let (start_points, program) = match parse_program(remaining_args, &mut options) {
                 Ok((start, program)) => (start, program),
@@ -15,50 +35,25 @@ fn run(args: Vec<String>) -> i32 {
                 }
             };
 
-            let mut ftsflags = Flags::empty();
-            // TODO: parsing the predicates will tell us if we should
-            // set Flags::XDEV.  But see the (somewhat) recent
-            // comments from the Austin group about the distinction
-            // between -mount and -xdev.
-            ftsflags.insert(match options.name_resolution() {
-                NameResolutionMode::P => Flags::PHYSICAL,
-                NameResolutionMode::L => Flags::LOGICAL,
-                NameResolutionMode::H => Flags::COMFOLLOW,
-            });
-            let start_points = {
-                let mut v: Vec<String> = start_points.into_iter().map(|s| s.to_string()).collect();
-                if v.is_empty() {
-                    v.push(".".to_string());
+            let mut source = match new_source(&options, start_points) {
+                Err(e) => {
+                    eprintln!("failed to initialise file system searcher: {e}");
+                    return 1;
                 }
-                v
+                Ok(source) => source,
             };
-            let mut fts = match Fts::new(
-                start_points,
-                ftsflags,
-                None, // unordered
-            ) {
-                Ok(searcher) => searcher,
-                Err(FtsError::PathWithNull) => unreachable!("NUL character in starting point"),
-                Err(FtsError::SetFail) => {
-                    unreachable!("fts_set apparently failed but was not called")
-                }
-            };
+
             let mut result = 0;
-            while let Some(entry) = fts.read() {
-                match visit(&program, &entry, &options) {
-                    Err(e) => {
-                        eprintln!("error: {e}");
-                        result = 1;
-                    }
-                    Ok(None) => (),
-                    Ok(Some(set_option)) => {
-                        if let Err(e) = fts.set(&entry, set_option) {
-                            eprintln!("fts_set failed: {e:?}");
-                            result = 1;
-                            break;
-                        }
-                    }
+            if let Err(e) = source.visit_all(|entry| match visit(&program, entry, &options) {
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    result = 1;
+                    Ok(VisitOutcome::Continue) // we don't want to stop.
                 }
+                Ok(outcome) => Ok(outcome),
+            }) {
+                eprintln!("error: {e}");
+                result = 1;
             }
             result
         }
@@ -70,6 +65,6 @@ fn run(args: Vec<String>) -> i32 {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let args: Vec<OsString> = std::env::args_os().collect();
     std::process::exit(run(args));
 }

@@ -1,5 +1,7 @@
 use std::error::Error;
+use std::ffi::OsStr;
 use std::fmt::{Display, Write};
+use std::str::FromStr;
 
 use getopt::{ErrorKind, Opt};
 
@@ -66,6 +68,19 @@ pub struct Options {
     mindepth: i32,
 }
 
+fn parse_os_str<T: FromStr>(s: &OsStr, what: &str) -> Result<T, InvalidOptionError> {
+    match s.to_str() {
+        Some(s) => match s.parse() {
+            Ok(n) => Ok(n),
+            Err(_) => Err(InvalidOptionError(format!("{s} is not a valid {what}"))),
+        },
+        None => Err(InvalidOptionError(format!(
+            "argument {} is not valid utf-8 and so cannot be used as an option argument here",
+            s.to_string_lossy()
+        ))),
+    }
+}
+
 impl Options {
     pub fn apply(&mut self, opt: GlobalOptionWithoutArg) {
         match opt {
@@ -78,10 +93,10 @@ impl Options {
     pub fn apply_with_arg(
         &mut self,
         opt: GlobalOptionWithArg,
-        arg: &str,
+        arg: &OsStr,
     ) -> Result<(), InvalidOptionError> {
         match opt {
-            GlobalOptionWithArg::MaxDepth => match arg.parse() {
+            GlobalOptionWithArg::MaxDepth => match parse_os_str(arg, "depth") {
                 Ok(n) if n < 0 => Err(InvalidOptionError(
                     "maximum depth must not be negative".to_string(),
                 )),
@@ -90,10 +105,11 @@ impl Options {
                     Ok(())
                 }
                 Err(e) => Err(InvalidOptionError(format!(
-                    "invalid maximum depth {arg}: {e}"
+                    "invalid maximum depth {}: {e}",
+                    arg.to_string_lossy(),
                 ))),
             },
-            GlobalOptionWithArg::MinDepth => match arg.parse() {
+            GlobalOptionWithArg::MinDepth => match parse_os_str(arg, "depth") {
                 Ok(n) if n < 0 => Err(InvalidOptionError(
                     "minimum depth must not be negative".to_string(),
                 )),
@@ -102,7 +118,8 @@ impl Options {
                     Ok(())
                 }
                 Err(e) => Err(InvalidOptionError(format!(
-                    "invalid minimum depth {arg}: {e}"
+                    "invalid minimum depth {}: {e}",
+                    arg.to_string_lossy(),
                 ))),
             },
         }
@@ -141,7 +158,10 @@ impl Options {
     }
 }
 
-pub fn parse_options<'a>(args: &'a [&'a str]) -> Result<(Options, &'a [&'a str]), UsageError> {
+pub fn parse_options<'a>(
+    os_args: &'a [&OsStr],
+    args: &'a [&'a str],
+) -> Result<(Options, &'a [&'a OsStr]), UsageError> {
     // TODO: we need to support starting points which aren't valid UTF-8.
     //
     // To do that we will probably need to access the FFI interface
@@ -200,7 +220,7 @@ pub fn parse_options<'a>(args: &'a [&'a str]) -> Result<(Options, &'a [&'a str])
             }
         }
     }
-    Ok((options, &args[opts.index()..]))
+    Ok((options, &os_args[opts.index()..]))
 }
 
 #[cfg(test)]

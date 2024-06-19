@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fmt::Display;
 
 use enum_iterator::Sequence;
@@ -60,25 +61,28 @@ enum TokenType {
     GlobalOptWithArg(GlobalOptionWithArg),
 }
 
-fn tokenize_word(s: &str) -> Result<TokenType, ParseError> {
+fn tokenize_word(s: &OsStr) -> Result<TokenType, ParseError> {
     use BinaryOperationKind::*;
-    match s {
-        "-depth" => Ok(TokenType::GlobalOptNoArg(
-            GlobalOptionWithoutArg::DepthFirst,
-        )),
-        "-print" => Ok(TokenType::Pred(PredicateToken::Print)),
-        "-true" => Ok(TokenType::Pred(PredicateToken::True)),
-        "-false" => Ok(TokenType::Pred(PredicateToken::False)),
-        "-maxdepth" => Ok(TokenType::GlobalOptWithArg(GlobalOptionWithArg::MaxDepth)),
-        "-mindepth" => Ok(TokenType::GlobalOptWithArg(GlobalOptionWithArg::MinDepth)),
-        "-type" => Ok(TokenType::Pred(PredicateToken::Type)),
-        "(" => Ok(TokenType::Paren(Parenthesis::Left)),
-        ")" => Ok(TokenType::Paren(Parenthesis::Right)),
-        "!" | "-not" => Ok(TokenType::Op(OperatorToken::Not)),
-        "-and" | "-a" => Ok(TokenType::Op(OperatorToken::Binary(And))),
-        "-or" | "-o" => Ok(TokenType::Op(OperatorToken::Binary(Or))),
-        "," => Ok(TokenType::Op(OperatorToken::Binary(Comma))),
-        _ => Err(ParseError(format!("unknown token {s}"))),
+    match s.to_str() {
+        Some(s) => match s {
+            "-depth" => Ok(TokenType::GlobalOptNoArg(
+                GlobalOptionWithoutArg::DepthFirst,
+            )),
+            "-print" => Ok(TokenType::Pred(PredicateToken::Print)),
+            "-true" => Ok(TokenType::Pred(PredicateToken::True)),
+            "-false" => Ok(TokenType::Pred(PredicateToken::False)),
+            "-maxdepth" => Ok(TokenType::GlobalOptWithArg(GlobalOptionWithArg::MaxDepth)),
+            "-mindepth" => Ok(TokenType::GlobalOptWithArg(GlobalOptionWithArg::MinDepth)),
+            "-type" => Ok(TokenType::Pred(PredicateToken::Type)),
+            "(" => Ok(TokenType::Paren(Parenthesis::Left)),
+            ")" => Ok(TokenType::Paren(Parenthesis::Right)),
+            "!" | "-not" => Ok(TokenType::Op(OperatorToken::Not)),
+            "-and" | "-a" => Ok(TokenType::Op(OperatorToken::Binary(And))),
+            "-or" | "-o" => Ok(TokenType::Op(OperatorToken::Binary(Or))),
+            "," => Ok(TokenType::Op(OperatorToken::Binary(Comma))),
+            _ => Err(ParseError(format!("unknown token {s}"))),
+        },
+        None => Err(ParseError("byte sequence is not valif UTF-8".to_string())),
     }
 }
 
@@ -86,26 +90,31 @@ fn tokenize_word(s: &str) -> Result<TokenType, ParseError> {
 pub enum PredOrSyntax<'a> {
     Predicate {
         token_type: PredicateToken,
-        arg: Option<&'a str>,
+        arg: Option<&'a OsStr>,
     },
     Op(OperatorToken),
     Paren(Parenthesis),
     GlobalOptWithoutArg(GlobalOptionWithoutArg),
-    GlobalOptWithArg(GlobalOptionWithArg, &'a str),
+    GlobalOptWithArg(GlobalOptionWithArg, &'a OsStr),
+}
+
+fn starts_with(s: &OsStr, prefix: &str) -> bool {
+    let prefix = prefix.as_bytes();
+    s.as_encoded_bytes().starts_with(prefix)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandLineItem<'a> {
-    StartingPoint(&'a str),
+    StartingPoint(&'a OsStr),
     Code(PredOrSyntax<'a>),
     GlobalOption0(GlobalOptionWithoutArg),
-    GlobalOption1(GlobalOptionWithArg, &'a str),
+    GlobalOption1(GlobalOptionWithArg, &'a OsStr),
 }
 
 pub fn tokenize_next_item<'a>(
-    input: &mut &'a [&'a str],
+    input: &mut &'a [&'a OsStr],
 ) -> Result<Option<CommandLineItem<'a>>, ParseError> {
-    let mut pop_arg = || -> Option<&str> {
+    let mut pop_arg = || -> Option<&OsStr> {
         match input {
             [first, rest @ ..] => {
                 *input = rest;
@@ -118,7 +127,7 @@ pub fn tokenize_next_item<'a>(
     if let Some(orig_token) = pop_arg() {
         match tokenize_word(orig_token) {
             Err(e) => {
-                if orig_token.starts_with('-') {
+                if starts_with(&orig_token, "-") {
                     return Err(e);
                 } else {
                     Ok(Some(CommandLineItem::StartingPoint(orig_token)))
@@ -135,7 +144,8 @@ pub fn tokenize_next_item<'a>(
                         arg: Some(arg),
                     }))),
                     None => Err(ParseError(format!(
-                        "predicate {orig_token} takes an argument but one was not specified"
+                        "predicate {} takes an argument but one was not specified",
+                        orig_token.to_string_lossy(),
                     ))),
                 },
             },
@@ -149,7 +159,8 @@ pub fn tokenize_next_item<'a>(
             Ok(TokenType::GlobalOptWithArg(option)) => match pop_arg() {
                 Some(arg) => Ok(Some(CommandLineItem::GlobalOption1(option, arg))),
                 None => Err(ParseError(format!(
-                    "global option {orig_token} needs an argument"
+                    "global option {} needs an argument",
+                    orig_token.to_string_lossy()
                 ))),
             },
         }

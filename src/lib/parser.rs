@@ -1,9 +1,9 @@
+mod lexer;
 #[cfg(test)]
 mod tests;
 
 use std::collections::VecDeque;
-
-mod lexer;
+use std::ffi::OsStr;
 
 use crate::ast::BinaryOperation;
 
@@ -18,11 +18,11 @@ fn global_option_placeholder_without_arg(opt: GlobalOptionWithoutArg) -> Express
     Expression::Just(Box::new(GlobalOptionPlaceholder::without_arg(opt)))
 }
 
-fn global_option_placeholder_with_arg(opt: GlobalOptionWithArg, arg: &str) -> Expression {
+fn global_option_placeholder_with_arg(opt: GlobalOptionWithArg, arg: &OsStr) -> Expression {
     Expression::Just(Box::new(GlobalOptionPlaceholder::with_arg(opt, arg)))
 }
 
-fn just(t: PredicateToken, arg: Option<&str>) -> Result<Expression, ParseError> {
+fn just(t: PredicateToken, arg: Option<&OsStr>) -> Result<Expression, ParseError> {
     fn mb<P: Predicate + Send + Sync>(p: P) -> BoxedPredicate {
         Box::new(p)
     }
@@ -465,13 +465,13 @@ fn reduce_predicates<'a>(
 }
 
 pub fn parse_program<'a, 'b>(
-    input: &'a [&'a str],
+    input: &'a [&'a OsStr],
     options: &'b mut Options,
-) -> Result<(&'a [&'a str], Expression), ParseError> {
+) -> Result<(&'a [&'a OsStr], Expression), ParseError> {
     fn tokenize_program<'a, 'b>(
-        mut input: &'a [&'a str],
+        mut input: &'a [&'a OsStr],
         options: &'b mut Options,
-    ) -> Result<(&'a [&'a str], Vec<PredOrSyntax<'a>>), ParseError> {
+    ) -> Result<(&'a [&'a OsStr], Vec<PredOrSyntax<'a>>), ParseError> {
         let orig_input = input;
         let mut predicates: Vec<PredOrSyntax> = Vec::with_capacity(input.len());
         let mut end_of_starting_points: usize = 0;
@@ -481,7 +481,10 @@ pub fn parse_program<'a, 'b>(
                     if predicates.is_empty() {
                         end_of_starting_points += 1;
                     } else {
-                        return Err(ParseError(format!("{arg} is not a valid predicate")));
+                        return Err(ParseError(format!(
+                            "{} is not a valid predicate",
+                            arg.to_string_lossy()
+                        )));
                     }
                 }
                 CommandLineItem::GlobalOption0(option) => {
@@ -490,7 +493,10 @@ pub fn parse_program<'a, 'b>(
                 }
                 CommandLineItem::GlobalOption1(option, arg) => {
                     options.apply_with_arg(option, arg).map_err(|e| {
-                        ParseError(format!("option {option} has invalid argument {arg}: {e}"))
+                        ParseError(format!(
+                            "option {option} has invalid argument {}: {e}",
+                            arg.to_string_lossy(),
+                        ))
                     })?;
                     predicates.push(PredOrSyntax::GlobalOptWithArg(option, arg));
                 }

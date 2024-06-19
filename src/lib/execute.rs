@@ -1,9 +1,9 @@
-use fts::fts::{FtsEntry, FtsInfo, FtsSetOption};
-use std::borrow::Cow;
+use std::path::PathBuf;
 
 use super::ast::{BinaryOperation, BinaryOperationKind, Expression, Predicate, Target};
 use super::errors::PredicateFailure;
 use super::options::Options;
+use super::source::{DirectoryVisitType, FoundFile, VisitType};
 
 impl Predicate for BinaryOperation {
     fn eval(&self, target: &Target) -> Result<bool, PredicateFailure> {
@@ -25,8 +25,8 @@ impl Predicate for BinaryOperation {
             .any(|action| action.inhibits_default_print())
     }
 
-    fn display_args<'a>(&self) -> Vec<std::borrow::Cow<'a, str>> {
-        let result: Vec<Cow<'_, str>> =
+    fn display_args(&self) -> Vec<String> {
+        let result: Vec<String> =
             Vec::with_capacity(self.children.len().checked_mul(2).unwrap_or(1));
         let operator: &'static str = match self.kind() {
             BinaryOperationKind::Comma => ",",
@@ -35,7 +35,7 @@ impl Predicate for BinaryOperation {
         };
         self.children.iter().fold(result, |mut acc, child| {
             if !acc.is_empty() {
-                acc.push(Cow::from(operator));
+                acc.push(operator.to_string());
             }
             acc.extend(child.display_args());
             acc
@@ -43,40 +43,60 @@ impl Predicate for BinaryOperation {
     }
 }
 
+#[derive(Debug)]
+pub enum VisitOutcome {
+    Continue,
+    Cycle(PathBuf),
+    PruneChildren,
+}
+
 pub fn visit(
     prog: &Expression,
-    entry: &FtsEntry,
+    entry: &FoundFile,
     options: &Options,
-) -> Result<Option<FtsSetOption>, PredicateFailure> {
-    if entry.level < options.mindepth() {
+) -> Result<VisitOutcome, PredicateFailure> {
+    if entry.depth < options.mindepth() {
         // Don't set the skip option, because we still want to visit
         // its descendants.
-        return Ok(None);
+        return Ok(VisitOutcome::Continue);
     }
-    match entry.info {
-        FtsInfo::IsDirPost if !options.depth_first() => {
-            // TODO: we will probably need to use this case to
-            // complete any pending executions for -execdir.
-            return Ok(None);
-        }
-        FtsInfo::IsDir if options.depth_first() => {
-            return Ok(None);
-        }
-        FtsInfo::IsNoStat => {
-            return Err(PredicateFailure::StatFailed(entry.path.to_path_buf()));
-        }
+    match &entry.visiting {
+        VisitType::Directory(directory_visit_type) => match directory_visit_type {
+            DirectoryVisitType::Cycle => {
+                return Ok(VisitOutcome::Cycle(entry.path.to_path_buf()));
+            }
+            DirectoryVisitType::Postorder if !options.depth_first() => {
+                // TODO: we will probably need to use this case to
+                // complete any pending executions for -execdir.
+                return Ok(VisitOutcome::Continue);
+            }
+            DirectoryVisitType::Preorder if options.depth_first() => {
+                return Ok(VisitOutcome::Continue);
+            }
+            DirectoryVisitType::Preorder | DirectoryVisitType::Postorder => (),
+            DirectoryVisitType::Unreadable => {
+                if options.depth_first() {
+                    // I would be surprised if fts implementations generally
+                    // visit an unreadable directory in postorder.
+                    return Ok(VisitOutcome::Continue);
+                } else {
+                    eprintln!(
+                        "error: cannot visit children of {} because it is unreadable",
+                        entry.path.display()
+                    );
+                    return Ok(VisitOutcome::Continue);
+                }
+            }
+        },
         _ => {
-            prog.eval(entry)?;
+            prog.eval(&entry)?;
         }
     }
     if let Some(limit) = options.maxdepth() {
-        if entry.level >= limit {
+        if entry.depth >= limit {
             // Skip the children of this entry.
-            Ok(Some(FtsSetOption::Skip))
-        } else {
-            Ok(None)
+            return Ok(VisitOutcome::PruneChildren);
         }
-    } else {
-        Ok(None)
     }
+    Ok(VisitOutcome::Continue)
 }

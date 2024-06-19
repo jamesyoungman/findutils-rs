@@ -1,16 +1,15 @@
-use std::borrow::Cow;
 use std::fmt::{Debug, Display, Write};
 
 use downcast_rs::{impl_downcast, Downcast};
-use fts::fts::FtsEntry;
 
 use super::errors::PredicateFailure;
+use super::source::FoundFile;
 
-pub type Target = FtsEntry;
+pub type Target<'a> = FoundFile<'a>;
 
 pub trait Predicate: Debug + Downcast {
     fn eval(&self, target: &Target) -> Result<bool, PredicateFailure>;
-    fn display_args<'a>(&self) -> Vec<Cow<'a, str>>;
+    fn display_args(&self) -> Vec<String>;
     fn inhibits_default_print(&self) -> bool;
 }
 
@@ -94,16 +93,16 @@ impl Predicate for Expression {
         }
     }
 
-    fn display_args<'a>(&self) -> Vec<Cow<'a, str>> {
+    fn display_args(&self) -> Vec<String> {
         match self {
             Expression::BinaryOp(op) => {
-                let mut result: Vec<Cow<'_, str>> = vec![Cow::from("(")];
+                let mut result: Vec<String> = vec!["(".to_string()];
                 result.extend(op.display_args());
-                result.push(Cow::from(")"));
+                result.push(")".to_string());
                 result
             }
             Expression::Not(expr) => {
-                let mut result = vec![Cow::from("!")];
+                let mut result = vec!["!".to_string()];
                 result.extend(expr.display_args());
                 result
             }
