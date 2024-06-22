@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::ffi::OsStr;
-use std::fmt::{Display, Write};
+use std::fmt::Display;
+use std::fmt::Write as FmtWrite;
+use std::io::Write as WriteRaw;
 use std::str::FromStr;
 
 use getopt::{ErrorKind, Opt};
@@ -158,17 +160,35 @@ impl Options {
     }
 }
 
-pub fn parse_options<'a>(
-    os_args: &'a [&OsStr],
-    args: &'a [&'a str],
-) -> Result<(Options, &'a [&'a OsStr]), UsageError> {
+pub fn parse_options<'a>(os_args: &'a [&OsStr]) -> Result<(Options, &'a [&'a OsStr]), UsageError> {
     // TODO: we need to support starting points which aren't valid UTF-8.
     //
     // To do that we will probably need to access the FFI interface
     // directly, and change the type of the `args` argument and the
     // return value, too.
-    let args_for_opt_parser: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    let mut opts = getopt::Parser::new(&args_for_opt_parser, "HLPD:"); // E not yet implemented.
+    let parser_args = {
+        let mut parser_args: Vec<String> = Vec::with_capacity(os_args.len());
+        for (i, os_arg) in os_args.iter().enumerate() {
+            match os_arg.to_str() {
+                Some(s) => {
+                    parser_args.push(s.to_string());
+                }
+                None => {
+                    let mut msg: Vec<u8> = Vec::new();
+                    let _ = write!(&mut msg, "Command-line argument {i} (");
+                    msg.extend(os_arg.as_encoded_bytes());
+                    let _ = write!(
+			&mut msg,
+			") is not valid UTF-8 and processing such arguments is not yet implemented."
+                    );
+                    return Err(UsageError::Encoded(msg));
+                }
+            }
+        }
+        parser_args
+    };
+
+    let mut opts = getopt::Parser::new(&parser_args, "HLPD:"); // E not yet implemented.
     let mut options = Options::default();
     // Process the leading options.
     loop {
@@ -189,11 +209,13 @@ pub fn parse_options<'a>(
                             options = new_options;
                         }
                         Err(_) => {
-                            return Err(UsageError(format!("unknown debug option '{name}'")));
+                            return Err(UsageError::Formatted(format!(
+                                "unknown debug option '{name}'"
+                            )));
                         }
                     },
                     None => {
-                        return Err(UsageError(format!(
+                        return Err(UsageError::Formatted(format!(
                             "the -D option should be followed by an argument"
                         )));
                     }
@@ -215,7 +237,7 @@ pub fn parse_options<'a>(
                     // character of a predicate.
                     break;
                 } else {
-                    return Err(UsageError(msg));
+                    return Err(UsageError::Formatted(msg));
                 }
             }
         }
@@ -227,10 +249,16 @@ pub fn parse_options<'a>(
 mod tests {
     use super::*;
 
-    fn parse_opt_vec<'a>(args: &'a [&'a str]) -> Result<(Options, &'a [&'a str]), UsageError> {
-        assert!(args.len() > 0);
-        dbg!(args);
-        dbg!(parse_options(&args))
+    fn s(p: &str) -> &OsStr {
+        OsStr::new(p)
+    }
+
+    fn parse_opt_vec<'a>(
+        os_args: &'a [&'a OsStr],
+    ) -> Result<(Options, &'a [&'a OsStr]), UsageError> {
+        assert!(os_args.len() > 0);
+        dbg!(os_args);
+        dbg!(parse_options(&os_args))
     }
 
     #[test]
@@ -240,7 +268,7 @@ mod tests {
                 Options::default().set_name_resolution(NameResolutionMode::P),
                 [].as_slice(),
             )),
-            parse_opt_vec(&["find"])
+            parse_opt_vec(&[OsStr::new("find")])
         );
     }
 
@@ -251,7 +279,7 @@ mod tests {
                 Options::default().set_name_resolution(NameResolutionMode::P),
                 [].as_slice()
             )),
-            parse_opt_vec(&["find", "-P"])
+            parse_opt_vec(&[OsStr::new("find"), OsStr::new("-P")])
         );
     }
 
@@ -262,7 +290,7 @@ mod tests {
                 Options::default().set_name_resolution(NameResolutionMode::P),
                 [].as_slice()
             )),
-            parse_opt_vec(&["-HP"])
+            parse_opt_vec(&[OsStr::new("-HP")])
         );
     }
 
@@ -273,7 +301,7 @@ mod tests {
                 Options::default().set_name_resolution(NameResolutionMode::P),
                 [].as_slice()
             )),
-            parse_opt_vec(&["find", "-LP"])
+            parse_opt_vec(&[OsStr::new("find"), OsStr::new("-LP")])
         );
     }
 
@@ -283,11 +311,26 @@ mod tests {
             Options::default().set_name_resolution(NameResolutionMode::L),
             [].as_slice(),
         ));
-        assert_eq!(expected, parse_opt_vec(&["find", "-L"]));
-        assert_eq!(expected, parse_opt_vec(&["find", "-LL"]));
-        assert_eq!(expected, parse_opt_vec(&["find", "-HL"]));
-        assert_eq!(expected, parse_opt_vec(&["find", "-PL"]));
-        assert_eq!(expected, parse_opt_vec(&["find", "-P", "-L"]));
+        assert_eq!(
+            expected,
+            parse_opt_vec(&[OsStr::new("find"), OsStr::new("-L")])
+        );
+        assert_eq!(
+            expected,
+            parse_opt_vec(&[OsStr::new("find"), OsStr::new("-LL")])
+        );
+        assert_eq!(
+            expected,
+            parse_opt_vec(&[OsStr::new("find"), OsStr::new("-HL")])
+        );
+        assert_eq!(
+            expected,
+            parse_opt_vec(&[OsStr::new("find"), OsStr::new("-PL")])
+        );
+        assert_eq!(
+            expected,
+            parse_opt_vec(&[OsStr::new("find"), OsStr::new("-P"), OsStr::new("-L")])
+        );
     }
 
     #[test]
@@ -297,7 +340,7 @@ mod tests {
                 Options::default().set_name_resolution(NameResolutionMode::H),
                 [].as_slice()
             )),
-            parse_opt_vec(&["find", "-H"])
+            parse_opt_vec(&[OsStr::new("find"), OsStr::new("-H")])
         );
     }
 
@@ -307,45 +350,71 @@ mod tests {
             Options::default().set_name_resolution(NameResolutionMode::H),
             [].as_slice(),
         ));
-        assert_eq!(expected, parse_opt_vec(&["find", "-H"]));
-        assert_eq!(expected, parse_opt_vec(&["find", "-H", "--"]));
+        assert_eq!(
+            expected,
+            parse_opt_vec(&[OsStr::new("find"), OsStr::new("-H")])
+        );
+        assert_eq!(
+            expected,
+            parse_opt_vec(&[OsStr::new("find"), OsStr::new("-H"), OsStr::new("--")])
+        );
     }
 
     #[test]
     fn parse_otions_non_options() {
-        let expected = Ok((
-            Options::default().set_name_resolution(NameResolutionMode::P),
-            ["foo/"].as_slice(),
-        ));
-        assert_eq!(expected, parse_opt_vec(["find", "foo/"].as_slice()));
-        assert_eq!(expected, parse_opt_vec(&["find", "--", "foo/"]));
+        assert_eq!(
+            Ok((
+                Options::default().set_name_resolution(NameResolutionMode::P),
+                [OsStr::new("foo/")].as_slice(),
+            )),
+            parse_opt_vec([s("find"), s("foo/")].as_slice())
+        );
+
+        assert_eq!(
+            Ok((
+                Options::default().set_name_resolution(NameResolutionMode::P),
+                [OsStr::new("foo/")].as_slice(),
+            )),
+            parse_opt_vec([OsStr::new("find"), OsStr::new("--"), OsStr::new("foo/")].as_slice())
+        );
     }
 
     #[test]
     fn parse_otions_with_start_and_pred() {
-        let expected = Ok((
-            Options::default().set_name_resolution(NameResolutionMode::L),
-            ["foo/", "-print"].as_slice(),
-        ));
-        assert_eq!(expected, parse_opt_vec(&["find", "-L", "foo/", "-print"]));
+        assert_eq!(
+            Ok((
+                Options::default().set_name_resolution(NameResolutionMode::L),
+                [OsStr::new("foo/"), OsStr::new("-print")].as_slice(),
+            )),
+            parse_opt_vec(&[
+                OsStr::new("find"),
+                OsStr::new("-L"),
+                OsStr::new("foo/"),
+                OsStr::new("-print")
+            ])
+        );
     }
 
     #[test]
     fn parse_otions_with_doubledash_pred_but_no_start() {
-        let expected = Ok((
-            Options::default().set_name_resolution(NameResolutionMode::L),
-            ["-print"].as_slice(),
-        ));
-        assert_eq!(expected, parse_opt_vec(&["find", "-L", "--", "-print"]));
+        assert_eq!(
+            Ok((
+                Options::default().set_name_resolution(NameResolutionMode::L),
+                [OsStr::new("-print")].as_slice(),
+            )),
+            parse_opt_vec(&[OsStr::new("find"), s("-L"), s("--"), s("-print")])
+        );
     }
 
     #[test]
     fn parse_otions_with_pred_but_no_start() {
-        let expected = Ok((
-            Options::default().set_name_resolution(NameResolutionMode::L),
-            ["-print"].as_slice(),
-        ));
-        assert_eq!(expected, parse_opt_vec(&["find", "-L", "-print"]));
+        assert_eq!(
+            Ok((
+                Options::default().set_name_resolution(NameResolutionMode::L),
+                [OsStr::new("-print")].as_slice(),
+            )),
+            parse_opt_vec(&[s("find"), s("-L"), s("-print")])
+        );
     }
 }
 

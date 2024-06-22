@@ -1,6 +1,7 @@
 mod ast;
 mod errors;
 mod execute;
+mod metadata;
 mod options;
 mod parser;
 mod platform;

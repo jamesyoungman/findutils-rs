@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use super::ast::{BinaryOperation, BinaryOperationKind, Expression, Predicate, Target};
 use super::errors::PredicateFailure;
+use super::metadata::{DirectoryVisitType, FoundFile, VisitType};
 use super::options::Options;
-use super::source::{DirectoryVisitType, FoundFile, VisitType};
 
 impl Predicate for BinaryOperation {
     fn eval(&self, target: &Target) -> Result<bool, PredicateFailure> {
@@ -63,7 +63,7 @@ pub fn visit(
     match &entry.visiting {
         VisitType::Directory(directory_visit_type) => match directory_visit_type {
             DirectoryVisitType::Cycle => {
-                return Ok(VisitOutcome::Cycle(entry.path.to_path_buf()));
+                return Ok(VisitOutcome::Cycle(entry.reported_path.to_path_buf()));
             }
             DirectoryVisitType::Postorder if !options.depth_first() => {
                 // TODO: we will probably need to use this case to
@@ -73,7 +73,9 @@ pub fn visit(
             DirectoryVisitType::Preorder if options.depth_first() => {
                 return Ok(VisitOutcome::Continue);
             }
-            DirectoryVisitType::Preorder | DirectoryVisitType::Postorder => (),
+            DirectoryVisitType::Preorder | DirectoryVisitType::Postorder => {
+                prog.eval(&entry)?;
+            }
             DirectoryVisitType::Unreadable => {
                 if options.depth_first() {
                     // I would be surprised if fts implementations generally
@@ -82,7 +84,7 @@ pub fn visit(
                 } else {
                     eprintln!(
                         "error: cannot visit children of {} because it is unreadable",
-                        entry.path.display()
+                        entry.reported_path.display()
                     );
                     return Ok(VisitOutcome::Continue);
                 }

@@ -6,7 +6,6 @@ mod comma;
 mod or;
 mod parens;
 mod program;
-mod type_pred;
 
 fn make_vdq<T, I>(items: I) -> VecDeque<T>
 where

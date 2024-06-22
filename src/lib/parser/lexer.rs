@@ -175,13 +175,13 @@ mod tests {
 
     use enum_iterator::all;
 
-    use super::super::super::predicate::TypePredicateFileType;
+    use super::super::super::metadata::TypePredicateFileType;
     use super::*;
 
     #[cfg(test)]
     fn tokenize_single_predicate<'a>(
-        mut input: &'a [&'a str],
-    ) -> Result<Option<(PredicateToken, Option<&'a str>)>, ParseError> {
+        mut input: &'a [&'a OsStr],
+    ) -> Result<Option<(PredicateToken, Option<&'a OsStr>)>, ParseError> {
         match tokenize_next_item(&mut input) {
             Err(e) => Err(e),
             Ok(Some(CommandLineItem::Code(PredOrSyntax::Predicate { token_type, arg }))) => {
@@ -238,15 +238,17 @@ mod tests {
                 TokenType::Op(OperatorToken::Binary(BinaryOperationKind::Comma)),
             ),
         ];
-        for (rep, tok_expected) in TESTCASES {
-            match tokenize_word(rep) {
+        for (display_rep, osrep, tok_expected) in
+            TESTCASES.iter().map(|(s, tok)| (s, OsStr::new(s), tok))
+        {
+            match tokenize_word(osrep) {
                 Err(e) => {
-                    panic!("{rep} should be a valid token but it is rejected: {e}");
+                    panic!("{display_rep} should be a valid token but it is rejected: {e}");
                 }
                 Ok(tok_got) => {
                     assert_eq!(
                         *tok_expected, tok_got,
-                        "Expected {rep} to parse to {tok_expected:?}, but got {tok_got:?}"
+                        "Expected {display_rep} to parse to {tok_expected:?}, but got {tok_got:?}"
                     );
                 }
             }
@@ -256,9 +258,9 @@ mod tests {
     #[test]
     fn test_parse_next_item_exhaustive_for_predicates() {
         fn tokenize_valid_predicate<'a>(
-            input: &'a [&'a str],
-        ) -> Option<(PredicateToken, Option<&'a str>)> {
-            match tokenize_single_predicate(input) {
+            input: &'a [&'a OsStr],
+        ) -> Option<(PredicateToken, Option<&'a OsStr>)> {
+            match tokenize_single_predicate(&input) {
                 Err(e) => {
                     panic!("input {input:?} should be valid but was not: {e}");
                 }
@@ -281,14 +283,15 @@ mod tests {
             &["-type", "s"],
             &["-type", "D"],
         ];
-        for fragment in test_inputs.iter() {
-            match tokenize_valid_predicate(fragment) {
+        test_inputs.into_iter().for_each(|fragment: &[&str]| {
+            let args: Vec<&OsStr> = fragment.iter().map(|s| OsStr::new(s)).collect();
+            match tokenize_valid_predicate(&args) {
                 Some((pred_token_type, _maybe_arg)) => {
                     tokens_seen.insert(pred_token_type);
                 }
                 None => (),
             }
-        }
+        });
 
         let missing: HashSet<PredicateToken> =
             all_tokens.difference(&tokens_seen).copied().collect();
@@ -310,7 +313,7 @@ mod tests {
             ("D", TypePredicateFileType::Door),
         ];
         for (letter, _expected_indicator) in test_inputs {
-            let input = &["-type", letter];
+            let input = &[OsStr::new("-type"), OsStr::new(letter)];
             match tokenize_single_predicate(input) {
                 Err(e) => {
                     panic!("failed to parse {input:?}: {e}");

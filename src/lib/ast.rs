@@ -3,7 +3,7 @@ use std::fmt::{Debug, Display, Write};
 use downcast_rs::{impl_downcast, Downcast};
 
 use super::errors::PredicateFailure;
-use super::source::FoundFile;
+use super::metadata::FoundFile;
 
 pub type Target<'a> = FoundFile<'a>;
 

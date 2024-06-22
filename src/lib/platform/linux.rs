@@ -1,24 +1,26 @@
 use std::fs::Metadata;
-
-use libc::{S_IFBLK, S_IFCHR, S_IFIFO, S_IFSOCK};
 use std::os::linux::fs::MetadataExt;
+use std::path::Path;
 
-pub fn is_char_device(md: &Metadata) -> bool {
-    md.st_mode() & S_IFCHR != 0
-}
+use super::super::{errors::PredicateFailure, metadata::TypePredicateFileType};
 
-pub fn is_block_device(md: &Metadata) -> bool {
-    md.st_mode() & S_IFBLK != 0
-}
-
-pub fn is_named_pipe(md: &Metadata) -> bool {
-    md.st_mode() & S_IFIFO != 0
-}
-
-pub fn is_unix_domain_socket(md: &Metadata) -> bool {
-    md.st_mode() & S_IFSOCK != 0
-}
-
-pub fn is_door(_md: &Metadata) -> bool {
-    false // doors do not exist on Linux.
+pub fn file_type_from_metadata(
+    md: &Metadata,
+    path: &Path,
+) -> Result<TypePredicateFileType, PredicateFailure> {
+    if md.is_file() {
+        return Ok(TypePredicateFileType::RegularFile);
+    } else if md.is_dir() {
+        return Ok(TypePredicateFileType::Directory);
+    } else if md.is_symlink() {
+        return Ok(TypePredicateFileType::SymbolicLink {});
+    }
+    let mode = md.st_mode();
+    match super::file_type_from_stat_st_mode(mode) {
+        Some(file_type) => Ok(file_type),
+        None => Err(PredicateFailure::UnrecognisedFileMode(
+            path.to_path_buf(),
+            mode,
+        )),
+    }
 }

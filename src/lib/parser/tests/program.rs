@@ -1,10 +1,14 @@
-use super::super::super::ast::{BinaryOperation, BinaryOperationKind, Expression};
-use super::super::super::options::{GlobalOptionWithoutArg, Options};
-use super::super::super::parser::{make_default_print, print_expr};
-use super::super::super::predicate::{
-    FalsePredicate, GlobalOptionPlaceholder, PrintPredicate, TruePredicate, TypePredicate,
+use std::ffi::OsStr;
+
+use super::super::super::{
+    ast::{BinaryOperation, BinaryOperationKind, Expression},
+    options::{GlobalOptionWithoutArg, Options},
+    parse_program,
+    parser::{make_default_print, print_expr},
+    predicate::{
+        FalsePredicate, GlobalOptionPlaceholder, PrintPredicate, TruePredicate, TypePredicate,
+    },
 };
-use super::super::parse_program;
 
 #[cfg(test)]
 fn verify_parse_and_options(
@@ -29,7 +33,8 @@ fn verify_parse_and_maybe_options(
     expected_options: Option<&Options>,
 ) {
     let mut options = Options::default();
-    match parse_program(input, &mut options) {
+    let input: Vec<&OsStr> = input.iter().map(|s| OsStr::new(s)).collect();
+    match parse_program(&input, &mut options) {
         Err(e) => {
             panic!("failed to parse {input:?}: {e}");
         }
@@ -50,7 +55,8 @@ fn verify_parse_and_maybe_options(
 #[cfg(test)]
 fn type_expr(arg: &str) -> Expression {
     Expression::Just(Box::new(
-        TypePredicate::new(arg).expect("argument to TypePredicate::new() should be valid"),
+        TypePredicate::new(OsStr::new(arg))
+            .expect("argument to TypePredicate::new() should be valid"),
     ))
 }
 
@@ -255,6 +261,7 @@ fn test_type_invalid() {
     ];
     for input in test_inputs {
         let mut options = Options::default();
+        let input: Vec<&OsStr> = input.into_iter().map(|s| OsStr::new(s)).collect();
         match parse_program(input.as_slice(), &mut options) {
             Err(_) => (), // as excpted
             Ok(out) => {
@@ -287,7 +294,15 @@ fn test_depth_option() {
 #[test]
 fn parse_otions_with_invalid_negative_mindepth() {
     let mut options = Options::default();
-    match parse_program(&["find", "-mindepth", "-1", "-print"], &mut options) {
+    match parse_program(
+        &[
+            OsStr::new("find"),
+            OsStr::new("-mindepth"),
+            OsStr::new("-1"),
+            OsStr::new("-print"),
+        ],
+        &mut options,
+    ) {
         Err(e) => {
             dbg!(&e);
             assert!(e.to_string().contains("negative"));
@@ -301,7 +316,15 @@ fn parse_otions_with_invalid_negative_mindepth() {
 #[test]
 fn parse_options_with_invalid_nonnumeric_mindepth() {
     let mut options = Options::default();
-    match parse_program(&["find", "-mindepth", "BAD", "-print"], &mut options) {
+    match parse_program(
+        &[
+            OsStr::new("find"),
+            OsStr::new("-mindepth"),
+            OsStr::new("BAD"),
+            OsStr::new("-print"),
+        ],
+        &mut options,
+    ) {
         Err(e) => {
             dbg!(&e);
             assert!(e.to_string().contains("BAD"));
@@ -315,7 +338,15 @@ fn parse_options_with_invalid_nonnumeric_mindepth() {
 #[test]
 fn parse_options_with_invalid_negative_maxdepth() {
     let mut options = Options::default();
-    match parse_program(&["find", "-maxdepth", "-1", "-print"], &mut options) {
+    match parse_program(
+        &[
+            OsStr::new("find"),
+            OsStr::new("-maxdepth"),
+            OsStr::new("-1"),
+            OsStr::new("-print"),
+        ],
+        &mut options,
+    ) {
         Err(e) => {
             dbg!(&e);
             assert!(e.to_string().contains("negative"));
@@ -329,7 +360,15 @@ fn parse_options_with_invalid_negative_maxdepth() {
 #[test]
 fn parse_options_with_invalid_nonnumeric_maxdepth() {
     let mut options = Options::default();
-    match parse_program(&["find", "-maxdepth", "FOO", "-print"], &mut options) {
+    match parse_program(
+        &[
+            OsStr::new("find"),
+            OsStr::new("-maxdepth"),
+            OsStr::new("FOO"),
+            OsStr::new("-print"),
+        ],
+        &mut options,
+    ) {
         Err(e) => {
             dbg!(&e);
             assert!(e.to_string().contains("FOO"));

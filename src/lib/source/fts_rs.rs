@@ -1,16 +1,20 @@
+use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::ffi::{OsStr, OsString};
-use std::fs;
-use std::path::Path;
 
 use fts::fts::fts_option::Flags;
 use fts::fts::{Fts, FtsEntry, FtsError, FtsInfo, FtsSetOption};
 
-use super::super::errors::PredicateFailure;
-use super::super::execute::VisitOutcome;
-use super::super::options::Options;
-use super::super::NameResolutionMode;
-use super::{DirectoryVisitType, Error, FoundFile, Source, SymlinkVisitType, VisitType};
+use crate::metadata::FileDetails;
+
+use super::super::{
+    errors::PredicateFailure,
+    execute::VisitOutcome,
+    metadata::{DirectoryVisitType, FoundFile, SymlinkVisitType, VisitType},
+    options::Options,
+    source::{Error, Source},
+    NameResolutionMode,
+};
 
 pub struct FtsRsSource {
     fts: Fts,
@@ -75,24 +79,35 @@ fn convert_visit_type(ftsentry: &FtsEntry) -> VisitType {
         | fts::fts::FtsInfo::IsUnknown => Unknown,
     }
 }
-fn convert_metadata(ftsentry: &FtsEntry) -> Option<Result<fs::Metadata, PredicateFailure>> {
+
+fn convert_metadata(ftsentry: &FtsEntry) -> Option<Result<FileDetails, PredicateFailure>> {
     if matches!(ftsentry.info, FtsInfo::IsNoStatOk) {
         None
     } else {
-        // TODO: can we avoid the clone here?
-        ftsentry.stat.as_ref().map(|md| Ok(md.clone()))
+        match ftsentry.stat.as_ref() {
+            Some(md) => Some(FileDetails::from_metadata(
+                md,
+                &ftsentry.path,
+                &ftsentry.path,
+            )),
+            None => None,
+        }
     }
 }
 
 fn convert_ftsentry(ftsentry: &FtsEntry) -> FoundFile {
     let visiting = convert_visit_type(&ftsentry);
-    let path: &Path = &ftsentry.path;
     FoundFile {
         visiting,
-        path,
-        metadata: if let Some(md) = convert_metadata(&ftsentry) {
+        reported_path: Cow::from(&ftsentry.path),
+        // Gnulib's fts implementation has a fts_accpath member which is
+        // the path name through which the file we're examining is
+        // accessible when FTS_NOCHDIR is set.  But this is not part of
+        // the BSD API and it is not exposed via fts-rs.
+        access_path: Cow::from(&ftsentry.path),
+        details: if let Some(details) = convert_metadata(&ftsentry) {
             let cell = OnceCell::new();
-            cell.set(md).expect("cell should have been empty");
+            cell.set(details).expect("cell should have been empty");
             cell
         } else {
             OnceCell::new()
@@ -104,7 +119,7 @@ fn convert_ftsentry(ftsentry: &FtsEntry) -> FoundFile {
 impl Source for FtsRsSource {
     fn visit_all<F>(&mut self, mut visitor: F) -> Result<(), PredicateFailure>
     where
-        F: FnMut(&super::FoundFile) -> Result<VisitOutcome, PredicateFailure>,
+        F: FnMut(&FoundFile) -> Result<VisitOutcome, PredicateFailure>,
     {
         while let Some(ftsentry) = self.fts.read() {
             let found = convert_ftsentry(&ftsentry);
