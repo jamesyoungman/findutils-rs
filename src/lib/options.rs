@@ -56,12 +56,6 @@ pub enum NameResolutionMode {
     H,
 }
 
-#[test]
-fn check_physical_name_resolution_is_the_default() {
-    // This is essential for conformance to the POSIX standard.
-    assert_eq!(NameResolutionMode::default(), NameResolutionMode::P);
-}
-
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct Options {
     name_resolution: NameResolutionMode,
@@ -249,6 +243,12 @@ pub fn parse_options<'a>(os_args: &'a [&OsStr]) -> Result<(Options, &'a [&'a OsS
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_physical_name_resolution_is_the_default() {
+        // This is essential for conformance to the POSIX standard.
+        assert_eq!(NameResolutionMode::default(), NameResolutionMode::P);
+    }
 
     fn s(p: &str) -> &OsStr {
         OsStr::new(p)
