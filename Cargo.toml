@@ -25,3 +25,8 @@ name = "find"
 [[bench]]
 name = "parens"
 harness = false
+
+[features]
+default = ["fts_sys"]
+fts_sys=[]
+fts_rs=[]

@@ -200,7 +200,7 @@ impl Source for FtsSysSource {
                 break;
             }
             if let Some(ftsent) = unsafe { entry.as_ref() } {
-                match convert_ftsent(&*ftsent) {
+                match convert_ftsent(ftsent) {
                     Ok(found) => match visitor(&found) {
                         Ok(VisitOutcome::Continue) => (),
                         Ok(VisitOutcome::Cycle(path)) => {

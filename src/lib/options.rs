@@ -48,17 +48,18 @@ impl DebugOptions {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum NameResolutionMode {
+    #[default]
     P,
     L,
     H,
 }
 
-impl Default for NameResolutionMode {
-    fn default() -> Self {
-        NameResolutionMode::P
-    }
+#[test]
+fn check_physical_name_resolution_is_the_default() {
+    // This is essential for conformance to the POSIX standard.
+    assert_eq!(NameResolutionMode::default(), NameResolutionMode::P);
 }
 
 #[derive(Debug, PartialEq, Eq, Default)]
@@ -215,9 +216,9 @@ pub fn parse_options<'a>(os_args: &'a [&OsStr]) -> Result<(Options, &'a [&'a OsS
                         }
                     },
                     None => {
-                        return Err(UsageError::Formatted(format!(
-                            "the -D option should be followed by an argument"
-                        )));
+                        return Err(UsageError::Formatted(
+                            "the -D option should be followed by an argument".to_string(),
+                        ));
                     }
                 },
                 _ => unreachable!(),

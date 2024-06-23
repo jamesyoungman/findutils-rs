@@ -61,7 +61,7 @@ enum PartialNoParens {
     Op(OperatorToken), // binary operator or a not operator
 }
 
-fn reduce_paren_expressions<'a>(
+fn reduce_paren_expressions(
     mut input: VecDeque<PartialNoPredicates>,
 ) -> Result<VecDeque<PartialNoParens>, ParseError> {
     // The member of `output` at position i represents an incompletely
@@ -105,7 +105,7 @@ fn reduce_paren_expressions<'a>(
                 // The expression we just popped off the back of the
                 // stack is a completed parenthesis expression.
                 Some(items) => {
-                    if output.len() < 1 {
+                    if output.is_empty() {
                         // This is not a valid state as there must
                         // always be a top-level expression.
                         return Err(ParseError("too many ')'".to_string()));
@@ -170,7 +170,7 @@ enum PartialCommaOnly {
     Comma,
 }
 
-fn reduce_not_ops<'a>(
+fn reduce_not_ops(
     mut input: VecDeque<PartialNoParens>,
 ) -> Result<VecDeque<PartialBinaryOpOnly>, ParseError> {
     let mut output = VecDeque::with_capacity(input.len());
@@ -200,9 +200,9 @@ fn reduce_not_ops<'a>(
                             return Err(ParseError(format!("The sequence ! {op} is not valid")));
                         }
                         None => {
-                            return Err(ParseError(format!(
-                                "! must not appear at the end of an expression"
-                            )));
+                            return Err(ParseError(
+                                "! must not appear at the end of an expression".to_string(),
+                            ));
                         }
                     }
                 }
@@ -215,7 +215,7 @@ fn reduce_not_ops<'a>(
     Ok(output)
 }
 
-fn reduce_and_ops<'a>(
+fn reduce_and_ops(
     mut input: VecDeque<PartialBinaryOpOnly>,
 ) -> Result<VecDeque<PartialOrCommaOnly>, ParseError> {
     let mut output: VecDeque<PartialOrCommaOnly> = VecDeque::with_capacity(input.len());
@@ -291,7 +291,7 @@ fn reduce_and_ops<'a>(
     Ok(output)
 }
 
-fn reduce_or_ops<'a>(
+fn reduce_or_ops(
     mut input: VecDeque<PartialOrCommaOnly>,
 ) -> Result<VecDeque<PartialCommaOnly>, ParseError> {
     let mut output: VecDeque<PartialCommaOnly> = VecDeque::with_capacity(input.len());
@@ -354,7 +354,7 @@ fn reduce_or_ops<'a>(
     Ok(output)
 }
 
-fn reduce_comma_ops<'a>(
+fn reduce_comma_ops(
     mut input: VecDeque<PartialCommaOnly>,
 ) -> Result<Option<Expression>, ParseError> {
     let mut expressions: Vec<Expression> = Vec::with_capacity(input.len());
@@ -436,9 +436,7 @@ fn parse_noparen_expression(
         .and_then(reduce_comma_ops)
 }
 
-fn reduce_predicates<'a>(
-    input: &[PredOrSyntax<'a>],
-) -> Result<Vec<PartialNoPredicates>, ParseError> {
+fn reduce_predicates(input: &[PredOrSyntax]) -> Result<Vec<PartialNoPredicates>, ParseError> {
     fn mapper(pred: &PredOrSyntax) -> Result<PartialNoPredicates, ParseError> {
         match pred {
             PredOrSyntax::Op(op) => Ok(PartialNoPredicates::Op(*op)),
@@ -464,13 +462,13 @@ fn reduce_predicates<'a>(
         })
 }
 
-pub fn parse_program<'a, 'b>(
+pub fn parse_program<'a>(
     input: &'a [&'a OsStr],
-    options: &'b mut Options,
+    options: &mut Options,
 ) -> Result<(&'a [&'a OsStr], Expression), ParseError> {
-    fn tokenize_program<'a, 'b>(
+    fn tokenize_program<'a>(
         mut input: &'a [&'a OsStr],
-        options: &'b mut Options,
+        options: &mut Options,
     ) -> Result<(&'a [&'a OsStr], Vec<PredOrSyntax<'a>>), ParseError> {
         let orig_input = input;
         let mut predicates: Vec<PredOrSyntax> = Vec::with_capacity(input.len());

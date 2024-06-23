@@ -7,7 +7,9 @@ use super::errors::PredicateFailure;
 use super::execute::VisitOutcome;
 use super::options::Options;
 
+#[cfg(feature = "fts_rs")]
 mod fts_rs;
+#[cfg(feature = "fts_sys")]
 mod fts_sys;
 
 #[derive(Debug)]
@@ -35,7 +37,12 @@ pub trait Source {
         F: FnMut(&FoundFile) -> Result<VisitOutcome, PredicateFailure>;
 }
 
+#[cfg(feature = "fts_rs")]
 pub fn new_source(options: &Options, start_points: &[&OsStr]) -> Result<impl Source, Error> {
-    //fts_rs::FtsRsSource::new(options, start_points)
+    fts_rs::FtsRsSource::new(options, start_points)
+}
+
+#[cfg(feature = "fts_sys")]
+pub fn new_source(options: &Options, start_points: &[&OsStr]) -> Result<impl Source, Error> {
     fts_sys::FtsSysSource::new(options, start_points)
 }

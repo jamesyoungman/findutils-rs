@@ -74,7 +74,7 @@ pub fn visit(
                 return Ok(VisitOutcome::Continue);
             }
             DirectoryVisitType::Preorder | DirectoryVisitType::Postorder => {
-                prog.eval(&entry)?;
+                prog.eval(entry)?;
             }
             DirectoryVisitType::Unreadable => {
                 if options.depth_first() {
@@ -91,7 +91,7 @@ pub fn visit(
             }
         },
         _ => {
-            prog.eval(&entry)?;
+            prog.eval(entry)?;
         }
     }
     if let Some(limit) = options.maxdepth() {

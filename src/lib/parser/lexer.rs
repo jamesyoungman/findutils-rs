@@ -127,8 +127,8 @@ pub fn tokenize_next_item<'a>(
     if let Some(orig_token) = pop_arg() {
         match tokenize_word(orig_token) {
             Err(e) => {
-                if starts_with(&orig_token, "-") {
-                    return Err(e);
+                if starts_with(orig_token, "-") {
+                    Err(e)
                 } else {
                     Ok(Some(CommandLineItem::StartingPoint(orig_token)))
                 }

@@ -9,7 +9,7 @@ mod unix;
 pub use unix::*;
 
 fn file_type_from_stat_st_mode(mut mode: u32) -> Option<TypePredicateFileType> {
-    mode = mode & (!0o777);
+    mode &= !0o777;
     for (mask, filetype) in [
         (S_IFBLK, TypePredicateFileType::BlockDevice),
         (S_IFCHR, TypePredicateFileType::CharacterDevice),

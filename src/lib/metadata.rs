@@ -130,9 +130,9 @@ impl TryFrom<&OsStr> for TypePredicateFileType {
             Some("s") => Ok(Socket),
             Some("D") => Ok(Door),
             Some(other) => Err(ParseError(format!("invalid file type: -type {other}"))),
-            None => Err(ParseError(format!(
-                "invalid file type: (because it is not a valid ASCII letter)"
-            ))),
+            None => Err(ParseError(
+                "invalid file type: (because it is not a valid ASCII letter)".to_string(),
+            )),
         }
     }
 }
