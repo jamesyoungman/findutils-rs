@@ -4,7 +4,6 @@ use std::ffi::{c_char, c_int, CStr, CString, OsStr};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::ptr;
 use std::slice;
 
@@ -26,7 +25,6 @@ use super::super::{
 };
 
 pub struct FtsSysSource {
-    paths: Vec<Pin<Box<CString>>>,
     inner: *mut FTS,
 }
 
@@ -40,11 +38,11 @@ impl FtsSysSource {
             NameResolutionMode::L => FTS_LOGICAL,
             NameResolutionMode::H => FTS_COMFOLLOW,
         };
-        let mut paths: Vec<Pin<Box<CString>>> = Vec::with_capacity(start_points.len());
+        let mut paths: Vec<CString> = Vec::with_capacity(start_points.len());
         for start in start_points.iter() {
             match CString::new(start.as_bytes()) {
                 Ok(cs) => {
-                    paths.push(Box::pin(cs));
+                    paths.push(cs);
                 }
                 Err(_) => {
                     // This start point is unsupported since it
@@ -57,12 +55,13 @@ impl FtsSysSource {
         start_points.extend(paths.iter().map(|path| path.as_ptr().cast()));
         start_points.push(ptr::null());
         let fts = unsafe { fts_open(start_points.as_ptr().cast(), fts_options, None) };
+        drop(start_points);
         if fts.is_null() {
             // On error, fts_open returns NULL and sets errno.
             let os_error = std::io::Error::last_os_error();
             return Err(Error::SetupFailed(os_error.to_string()));
         }
-        Ok(FtsSysSource { paths, inner: fts })
+        Ok(FtsSysSource { inner: fts })
     }
 }
 
