@@ -26,7 +26,25 @@ tempdir = "0.3"
 [dependencies]
 fts = "0.3"
 fts-sys = "0.2.9"
-getopt = "1.1.6"
+# We don't use getopt, because it doesn't support OsStr arguments;
+# same for argh.  We don't use getopts because it cannot return OsStr
+# free arguments.  We don't use pico-args because it doesn't seem to
+# have a simple way to arrange for mutually-overriding options (such
+# as -H, -L, -P).  We might be able to use Clap (I looked at version
+# 4) but it's not obvious that this can be used to parse options where
+# there is no long-option form (e.g. -H).  The xflags crate will
+# probably be unsuitable as is uses Fuschia convenstion (i.e. that -HP
+# is a long option and not equivalent to -H -P).
+#
+# bpaf is nearly suitable but doesn't handle positional arguments in
+# the way that we would like.  Without .strict(), options are allowed
+# to exist on the right of start points (e.g. "/tmp -H" and "-H /tmp"
+# have the same parse result).  With strict, positional arguments are
+# not recognised on the left of "--".
+#
+#
+# Still need to look at bpaf, lexopt.
+bpaf = {version = "0.9", features = ["derive"]}
 enum-iterator = "2"
 downcast-rs = "1.2.1"
 libc = "0.2"

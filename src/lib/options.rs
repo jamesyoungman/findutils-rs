@@ -64,15 +64,14 @@
 // have the same parse result).  With strict, positional arguments are
 // not recognised on the left of "--".
 
+use std::collections::BTreeSet;
 use std::error::Error;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt::Display;
-use std::io::Write as WriteRaw;
 use std::str::FromStr;
 
-use getopt::{ErrorKind, Opt};
-
 use super::UsageError;
+use bpaf::*;
 
 #[derive(Debug)]
 pub struct InvalidOptionError(String);
@@ -85,31 +84,74 @@ impl Display for InvalidOptionError {
 
 impl Error for InvalidOptionError {}
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
 pub enum DebugOption {
     Tree,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, Default)]
+fn str_to_debug_options(s: String) -> Result<DebugOptions, BadDebugOption> {
+    s.split(',')
+        .try_fold(DebugOptions::default(), |mut options, opt| {
+            options.set(DebugOption::try_from(opt)?);
+            Ok(options)
+        })
+}
+
+#[test]
+fn test_valid_debug_options() {
+    let _ =
+        str_to_debug_options(VALID_DEBUG_OPTIONS.to_string()).expect("all options should be valid");
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
+pub struct BadDebugOption(String);
+
+impl Display for BadDebugOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "'{}' is not a valid debug option; valid options are: {VALID_DEBUG_OPTIONS}",
+            self.0
+        )
+    }
+}
+
+impl Error for BadDebugOption {}
+
+const VALID_DEBUG_OPTIONS: &str = "tree";
+
+impl TryFrom<&str> for DebugOption {
+    type Error = BadDebugOption;
+    fn try_from(s: &str) -> Result<DebugOption, BadDebugOption> {
+        match s {
+            "tree" => Ok(DebugOption::Tree),
+            other => Err(BadDebugOption(other.to_string())),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash, Default)]
 pub struct DebugOptions {
-    tree: bool,
+    values: BTreeSet<DebugOption>,
 }
 
 impl DebugOptions {
-    pub fn set(&mut self, opt: &str) -> Result<(), ()> {
-        match opt {
-            "tree" => {
-                self.tree = true;
-                Ok(())
-            }
-            _ => Err(()),
-        }
+    pub fn set(&mut self, opt: DebugOption) {
+        self.values.insert(opt);
     }
 
     pub fn get(&self, opt: &DebugOption) -> bool {
-        match opt {
-            DebugOption::Tree => self.tree,
-        }
+        self.values.contains(opt)
+    }
+}
+
+impl FromIterator<DebugOptions> for DebugOptions {
+    fn from_iter<T: IntoIterator<Item = DebugOptions>>(iter: T) -> Self {
+        iter.into_iter()
+            .fold(DebugOptions::default(), |mut acc, mut more| {
+                acc.values.append(&mut more.values);
+                acc
+            })
     }
 }
 
@@ -119,6 +161,28 @@ pub enum NameResolutionMode {
     P,
     L,
     H,
+}
+
+#[derive(Default, Debug, PartialEq, Eq)]
+pub struct BadNameResolutionMode(pub String);
+
+impl Display for BadNameResolutionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "'{}' is not a valid name resoltuion mode", self.0)
+    }
+}
+
+impl FromStr for NameResolutionMode {
+    type Err = BadNameResolutionMode;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "physical" => Ok(NameResolutionMode::P),
+            "logical" => Ok(NameResolutionMode::L),
+            "hybrid" => Ok(NameResolutionMode::H),
+            _ => Err(BadNameResolutionMode(s.to_string())),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Default)]
@@ -200,11 +264,14 @@ impl Options {
         self.depth_first
     }
 
-    pub fn set_debug_option(mut self, name: &str) -> Result<Options, ()> {
-        match self.debug_options.set(name) {
-            Err(_) => Err(()),
-            Ok(_) => Ok(self),
-        }
+    pub fn set_debug_option(mut self, opt: DebugOption) -> Options {
+        self.debug_options.set(opt);
+        self
+    }
+
+    pub fn set_debug_options(mut self, mut opts: DebugOptions) -> Options {
+        self.debug_options.values.append(&mut opts.values);
+        self
     }
 
     pub fn get_debug_option(&self, opt: &DebugOption) -> bool {
@@ -220,86 +287,52 @@ impl Options {
     }
 }
 
-pub fn parse_options<'a>(os_args: &'a [&OsStr]) -> Result<(Options, &'a [&'a OsStr]), UsageError> {
-    // TODO: we need to support starting points which aren't valid UTF-8.
-    //
-    // To do that we will probably need to access the FFI interface
-    // directly, and change the type of the `args` argument and the
-    // return value, too.
-    let parser_args = {
-        let mut parser_args: Vec<String> = Vec::with_capacity(os_args.len());
-        for (i, os_arg) in os_args.iter().enumerate() {
-            match os_arg.to_str() {
-                Some(s) => {
-                    parser_args.push(s.to_string());
-                }
-                None => {
-                    let mut msg: Vec<u8> = Vec::new();
-                    let _ = write!(&mut msg, "Command-line argument {i} (");
-                    msg.extend(os_arg.as_encoded_bytes());
-                    let _ = write!(
-			&mut msg,
-			") is not valid UTF-8 and processing such arguments is not yet implemented."
-                    );
-                    return Err(UsageError::Encoded(msg));
-                }
-            }
-        }
-        parser_args
-    };
+fn make_option_parser() -> OptionParser<(NameResolutionMode, DebugOptions, Vec<OsString>)> {
+    let h = short('H')
+        .help("dereference symbolic links on the command line")
+        .req_flag(NameResolutionMode::H);
+    let l = short('L')
+        .help("dereference all symbolic links")
+        .req_flag(NameResolutionMode::L);
+    let p = short('P')
+        .help("do not dereference symbolic links")
+        .req_flag(NameResolutionMode::P);
+    let debug = short('D')
+        .help("selects debugging output; comma-separated liist of values")
+        .argument::<String>("CATEGORIES")
+        .parse(str_to_debug_options)
+        .collect::<DebugOptions>();
+    let traversal_options = construct!([h, l, p]).last().fallback(NameResolutionMode::P);
+    let tail = positional::<OsString>("start point or predicate").many();
+    let option_parser = construct!(traversal_options, debug, tail)
+        .to_options()
+        .with_usage(|u| {
+            let mut doc = Doc::default();
+            doc.emphasis("Usage: ");
+            doc.literal("find");
+            doc.text(" ");
+            doc.doc(&u);
+            doc
+        });
+    option_parser
+}
 
-    let mut opts = getopt::Parser::new(&parser_args, "HLPD:"); // E not yet implemented.
-    let mut options = Options::default();
-    // Process the leading options.
-    loop {
-        match opts.next() {
-            Some(Ok(opt)) => match opt {
-                Opt('P', None) => {
-                    options = options.set_name_resolution(NameResolutionMode::P);
-                }
-                Opt('L', None) => {
-                    options = options.set_name_resolution(NameResolutionMode::L);
-                }
-                Opt('H', None) => {
-                    options = options.set_name_resolution(NameResolutionMode::H);
-                }
-                Opt('D', debug_opt) => match debug_opt {
-                    Some(name) => match options.set_debug_option(name.as_str()) {
-                        Ok(new_options) => {
-                            options = new_options;
-                        }
-                        Err(_) => {
-                            return Err(UsageError::Formatted(format!(
-                                "unknown debug option '{name}'"
-                            )));
-                        }
-                    },
-                    None => {
-                        return Err(UsageError::Formatted(
-                            "the -D option should be followed by an argument".to_string(),
-                        ));
-                    }
-                },
-                _ => unreachable!(),
-            },
-            None => break,
-            Some(Err(e)) => {
-                if e.kind() == ErrorKind::UnknownOption {
-                    // We come here when we have a command line like
-                    // "find -L -print" because 'p' is not a known
-                    // option letter.
-                    //
-                    // We benefit I suppose from the fact that none of
-                    // the valid option letters is also the first
-                    // character of a predicate.
-                    break;
-                } else {
-                    return Err(UsageError::Formatted(e.to_string()));
-                }
-            }
+pub fn parse_options(mut args: &[&OsStr]) -> Result<(Options, Vec<OsString>), UsageError> {
+    assert!(!args.is_empty());
+    args = &args[1..];
+
+    let option_parser = make_option_parser();
+    match dbg!(option_parser.run_inner(args)) {
+        Ok((traversal, debug_options, tail)) => {
+            let options = Options::default()
+                .set_name_resolution(traversal)
+                .set_debug_options(debug_options);
+            Ok((options, tail))
         }
+        Err(ParseFailure::Stdout(doc, _ok)) => Err(UsageError::Formatted(format!("{doc}"))),
+        Err(ParseFailure::Stderr(doc)) => Err(UsageError::Formatted(format!("{doc}"))),
+        Err(ParseFailure::Completion(_)) => todo!("handle options completion"),
     }
-    Ok((options, &os_args[opts.index()..]))
 }
 
 #[cfg(test)]
@@ -316,63 +349,72 @@ mod tests {
         OsStr::new(p)
     }
 
-    fn parse_opt_vec<'a>(
-        os_args: &'a [&'a OsStr],
-    ) -> Result<(Options, &'a [&'a OsStr]), UsageError> {
+    fn parse_opt_vec<'a>(os_args: &'a [&'a OsStr]) -> Result<(Options, Vec<OsString>), UsageError> {
         assert!(os_args.len() > 0);
         dbg!(os_args);
         dbg!(parse_options(&os_args))
     }
 
     #[test]
-    fn parse_otions_no_options() {
+    fn parse_options_no_options() {
         assert_eq!(
             Ok((
                 Options::default().set_name_resolution(NameResolutionMode::P),
-                [].as_slice(),
+                vec![],
             )),
             parse_opt_vec(&[OsStr::new("find")])
         );
     }
 
     #[test]
-    fn parse_otions_p() {
+    fn parse_options_p() {
         assert_eq!(
             Ok((
                 Options::default().set_name_resolution(NameResolutionMode::P),
-                [].as_slice()
+                vec![]
             )),
             parse_opt_vec(&[OsStr::new("find"), OsStr::new("-P")])
         );
     }
 
     #[test]
-    fn parse_otions_hp() {
+    fn parse_options_hp() {
         assert_eq!(
             Ok((
                 Options::default().set_name_resolution(NameResolutionMode::P),
-                [].as_slice()
+                vec![]
             )),
             parse_opt_vec(&[OsStr::new("-HP")])
         );
     }
 
     #[test]
-    fn parse_otions_lp() {
+    fn parse_options_ph() {
+        assert_eq!(
+            Ok((
+                Options::default().set_name_resolution(NameResolutionMode::H),
+                vec![]
+            )),
+            parse_opt_vec(&[OsStr::new("-PH")])
+        );
+    }
+
+    #[test]
+    fn parse_options_lp() {
         assert_eq!(
             Ok((
                 Options::default().set_name_resolution(NameResolutionMode::P),
-                [].as_slice()
+                vec![]
             )),
             parse_opt_vec(&[OsStr::new("find"), OsStr::new("-LP")])
         );
     }
 
     #[test]
-    fn parse_otions_l() {
+    fn parse_options_l() {
         let expected = Ok((
             Options::default().set_name_resolution(NameResolutionMode::L),
-            [].as_slice(),
+            vec![],
         ));
         assert_eq!(
             expected,
@@ -397,21 +439,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_otions_h() {
+    fn parse_options_h() {
         assert_eq!(
             Ok((
                 Options::default().set_name_resolution(NameResolutionMode::H),
-                [].as_slice()
+                vec![]
             )),
             parse_opt_vec(&[OsStr::new("find"), OsStr::new("-H")])
         );
     }
 
     #[test]
-    fn parse_otions_double_dash() {
+    fn parse_options_double_dash() {
         let expected = Ok((
             Options::default().set_name_resolution(NameResolutionMode::H),
-            [].as_slice(),
+            vec![],
         ));
         assert_eq!(
             expected,
@@ -424,11 +466,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_otions_non_options() {
+    fn parse_options_non_options() {
         assert_eq!(
             Ok((
                 Options::default().set_name_resolution(NameResolutionMode::P),
-                [OsStr::new("foo/")].as_slice(),
+                vec![OsString::from("foo/")]
             )),
             parse_opt_vec([s("find"), s("foo/")].as_slice())
         );
@@ -436,18 +478,18 @@ mod tests {
         assert_eq!(
             Ok((
                 Options::default().set_name_resolution(NameResolutionMode::P),
-                [OsStr::new("foo/")].as_slice(),
+                vec![OsString::from("foo/")],
             )),
             parse_opt_vec([OsStr::new("find"), OsStr::new("--"), OsStr::new("foo/")].as_slice())
         );
     }
 
     #[test]
-    fn parse_otions_with_start_and_pred() {
+    fn parse_options_with_start_and_pred() {
         assert_eq!(
             Ok((
                 Options::default().set_name_resolution(NameResolutionMode::L),
-                [OsStr::new("foo/"), OsStr::new("-print")].as_slice(),
+                vec![OsString::from("foo/"), OsString::from("-print")],
             )),
             parse_opt_vec(&[
                 OsStr::new("find"),
@@ -459,22 +501,22 @@ mod tests {
     }
 
     #[test]
-    fn parse_otions_with_doubledash_pred_but_no_start() {
+    fn parse_options_with_doubledash_pred_but_no_start() {
         assert_eq!(
             Ok((
                 Options::default().set_name_resolution(NameResolutionMode::L),
-                [OsStr::new("-print")].as_slice(),
+                vec![OsString::from("-print")],
             )),
             parse_opt_vec(&[OsStr::new("find"), s("-L"), s("--"), s("-print")])
         );
     }
 
     #[test]
-    fn parse_otions_with_pred_but_no_start() {
+    fn parse_options_with_pred_but_no_start() {
         assert_eq!(
             Ok((
                 Options::default().set_name_resolution(NameResolutionMode::L),
-                [OsStr::new("-print")].as_slice(),
+                vec![OsString::from("-print")],
             )),
             parse_opt_vec(&[s("find"), s("-L"), s("-print")])
         );
@@ -485,12 +527,15 @@ mod tests {
         // This is the example from https://github.com/pacak/bpaf/discussions/364#discussioncomment-9859291
         let expected_options = Options::default()
             .set_name_resolution(NameResolutionMode::L)
-            .set_debug_option("tree")
-            .expect("should be a valid option");
+            .set_debug_option(DebugOption::Tree);
         assert_eq!(
             Ok((
                 expected_options,
-                vec![s("/tmp"), s("/var/tmp"), s("-H"),].as_slice(),
+                vec![
+                    OsString::from("/tmp"),
+                    OsString::from("/var/tmp"),
+                    OsString::from("-H"),
+                ],
             )),
             parse_opt_vec(&[
                 s("find"),

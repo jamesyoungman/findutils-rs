@@ -176,19 +176,23 @@ fn run(args: Vec<OsString>) -> i32 {
 
     let args: Vec<&OsStr> = args.iter().map(|s| s.as_os_str()).collect();
     match parse_options(&args) {
-        Ok((mut options, remaining_args)) => match parse_program(remaining_args, &mut options) {
-            Ok((start, program)) => {
-                let start_points = if start.is_empty() {
-                    &default_start_points
-                } else {
-                    start
-                };
-                examine_filesystem(&options, start_points, &program, sink);
+        Ok((mut options, remaining_args)) => {
+            let remaining_args: Vec<&OsStr> =
+                remaining_args.iter().map(|s| s.as_os_str()).collect();
+            match parse_program(&remaining_args, &mut options) {
+                Ok((start, program)) => {
+                    let start_points = if start.is_empty() {
+                        &default_start_points
+                    } else {
+                        start
+                    };
+                    examine_filesystem(&options, start_points, &program, sink);
+                }
+                Err(e) => {
+                    sink.emit_encoded_error(1, format!("parse error: {}", e).as_bytes());
+                }
             }
-            Err(e) => {
-                sink.emit_encoded_error(1, format!("parse error: {}", e).as_bytes());
-            }
-        },
+        }
         Err(e) => {
             sink.emit_encoded_error(1, (&e).into());
         }
