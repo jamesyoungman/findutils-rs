@@ -1,3 +1,53 @@
+// We need POSIX compliance for option processing (just for the
+// initial options, -H, -P, -L).  This is hard to achieve with common
+// option-processing crates, for which this kind of compliance doesn't
+// seem much to be a priority.
+//
+//
+// getopt
+// ======
+// We currently use getopt.  Unfortunately it doesn't support OsStr
+// arguments, so this is a compliance problem.
+//
+// argh
+// ====
+// Same for argh as getopt.
+//
+// getopts
+// =======
+//
+// We don't use getopts because it cannot return OsStr
+// free arguments.
+//
+// pico-args
+// =========
+//
+// We don't use pico-args because it doesn't seem to have a simple way
+// to arrange for mutually-overriding options (such as -H, -L, -P).
+//
+// clap
+// ====
+//
+// We might be able to use Clap (I looked at version 4) but it's not
+// obvious that this can be used to parse options where there is no
+// long-option form (e.g. -H).
+//
+// xflags
+// ======
+//
+// The xflags crate will probably be unsuitable as is uses Fuschia
+// convenstion (i.e. that -HP is a long option and not equivalent to
+// -H -P).
+//
+// bpaf
+// ====
+//
+// bpaf is nearly suitable but doesn't handle positional arguments in
+// the way that we would like.  Without .strict(), options are allowed
+// to exist on the right of start points (e.g. "/tmp -H" and "-H /tmp"
+// have the same parse result).  With strict, positional arguments are
+// not recognised on the left of "--".
+
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt::Display;
