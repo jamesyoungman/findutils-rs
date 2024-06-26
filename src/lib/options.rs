@@ -483,6 +483,33 @@ mod tests {
             parse_opt_vec(&[s("find"), s("-L"), s("-print")])
         );
     }
+
+    #[test]
+    fn parse_h_after_positional_option() {
+        // This is the example from https://github.com/pacak/bpaf/discussions/364#discussioncomment-9859291
+        let expected_options = Options::default()
+            .set_name_resolution(NameResolutionMode::L)
+            .set_debug_option("tree")
+            .expect("should be a valid option");
+        assert_eq!(
+            Ok((
+                expected_options,
+                vec![s("/tmp"), s("/var/tmp"), s("-H"),].as_slice(),
+            )),
+            parse_opt_vec(&[
+                s("find"),
+                s("-H"),
+                s("-H"),
+                s("-LPH"),
+                s("-D"),
+                s("tree"),
+                s("-PL"),
+                s("/tmp"),
+                s("/var/tmp"),
+                s("-H"),
+            ])
+        );
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
