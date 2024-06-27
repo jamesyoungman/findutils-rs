@@ -67,7 +67,6 @@
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt::Display;
-use std::fmt::Write as FmtWrite;
 use std::io::Write as WriteRaw;
 use std::str::FromStr;
 
@@ -285,10 +284,7 @@ pub fn parse_options<'a>(os_args: &'a [&OsStr]) -> Result<(Options, &'a [&'a OsS
             },
             None => break,
             Some(Err(e)) => {
-                let mut msg = String::new();
-                write!(msg, "{}", e).expect("writes to string always succeeds");
-                let kind = e.kind();
-                if kind == ErrorKind::UnknownOption {
+                if e.kind() == ErrorKind::UnknownOption {
                     // We come here when we have a command line like
                     // "find -L -print" because 'p' is not a known
                     // option letter.
@@ -298,7 +294,7 @@ pub fn parse_options<'a>(os_args: &'a [&OsStr]) -> Result<(Options, &'a [&'a OsS
                     // character of a predicate.
                     break;
                 } else {
-                    return Err(UsageError::Formatted(msg));
+                    return Err(UsageError::Formatted(e.to_string()));
                 }
             }
         }

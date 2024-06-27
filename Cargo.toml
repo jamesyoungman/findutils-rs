@@ -26,7 +26,7 @@ tempdir = "0.3"
 [dependencies]
 fts = "0.3"
 fts-sys = "0.2.9"
-getopt = "1.1"
+getopt = "1.1.6"
 enum-iterator = "2"
 downcast-rs = "1.2.1"
 libc = "0.2"
