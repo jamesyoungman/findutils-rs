@@ -17,6 +17,7 @@
 use std::ffi::{OsStr, OsString};
 
 use super::ast::Predicate;
+use super::effects::EffectSink;
 use super::errors::{ParseError, PredicateFailure};
 use super::metadata::TypePredicateFileType;
 use super::options::{GlobalOptionWithArg, GlobalOptionWithoutArg};
@@ -25,8 +26,16 @@ use super::options::{GlobalOptionWithArg, GlobalOptionWithoutArg};
 pub struct PrintPredicate {}
 
 impl Predicate for PrintPredicate {
-    fn eval(&self, target: &crate::ast::Target) -> Result<bool, PredicateFailure> {
-        println!("{}", target.reported_path.display());
+    fn eval(
+        &self,
+        target: &crate::ast::Target,
+        sink: &mut Box<dyn EffectSink>,
+    ) -> Result<bool, PredicateFailure> {
+        sink.emit_encoded_output(target.reported_path().as_os_str().as_encoded_bytes());
+        sink.emit_encoded_output(b"\n");
+        // -print always returns true even if the ouput failed, but
+        // the eventual exit status is non-zero; EffectSink will take
+        // care of that for us.
         Ok(true)
     }
 
@@ -49,7 +58,11 @@ impl PrintPredicate {
 pub struct TypePredicate(pub TypePredicateFileType);
 
 impl Predicate for TypePredicate {
-    fn eval(&self, target: &crate::ast::Target) -> Result<bool, PredicateFailure> {
+    fn eval(
+        &self,
+        target: &crate::ast::Target,
+        _sink: &mut Box<dyn EffectSink>,
+    ) -> Result<bool, PredicateFailure> {
         Ok(self.0 == target.details()?.file_type())
     }
 
@@ -72,7 +85,11 @@ impl TypePredicate {
 pub struct TruePredicate {}
 
 impl Predicate for TruePredicate {
-    fn eval(&self, _target: &crate::ast::Target) -> Result<bool, PredicateFailure> {
+    fn eval(
+        &self,
+        _target: &crate::ast::Target,
+        _sink: &mut Box<dyn EffectSink>,
+    ) -> Result<bool, PredicateFailure> {
         Ok(true)
     }
 
@@ -89,7 +106,11 @@ impl Predicate for TruePredicate {
 pub struct FalsePredicate {}
 
 impl Predicate for FalsePredicate {
-    fn eval(&self, _target: &crate::ast::Target) -> Result<bool, PredicateFailure> {
+    fn eval(
+        &self,
+        _target: &crate::ast::Target,
+        _sink: &mut Box<dyn EffectSink>,
+    ) -> Result<bool, PredicateFailure> {
         Ok(false)
     }
 
@@ -118,7 +139,11 @@ impl GlobalOptionPlaceholder {
 }
 
 impl Predicate for GlobalOptionPlaceholder {
-    fn eval(&self, _target: &crate::ast::Target) -> Result<bool, PredicateFailure> {
+    fn eval(
+        &self,
+        _target: &crate::ast::Target,
+        _sink: &mut Box<dyn EffectSink>,
+    ) -> Result<bool, PredicateFailure> {
         Ok(true)
     }
 

@@ -18,13 +18,18 @@ use std::fmt::{Debug, Display, Write};
 
 use downcast_rs::{impl_downcast, Downcast};
 
+use super::effects::EffectSink;
 use super::errors::PredicateFailure;
 use super::metadata::FoundFile;
 
 pub type Target<'a> = FoundFile<'a>;
 
 pub trait Predicate: Debug + Downcast {
-    fn eval(&self, target: &Target) -> Result<bool, PredicateFailure>;
+    fn eval(
+        &self,
+        target: &Target,
+        sink: &mut Box<dyn EffectSink>,
+    ) -> Result<bool, PredicateFailure>;
     fn display_args(&self) -> Vec<String>;
     fn inhibits_default_print(&self) -> bool;
 }
@@ -93,11 +98,15 @@ pub enum Expression {
 }
 
 impl Predicate for Expression {
-    fn eval(&self, target: &Target) -> Result<bool, PredicateFailure> {
+    fn eval(
+        &self,
+        target: &Target,
+        sink: &mut Box<dyn EffectSink>,
+    ) -> Result<bool, PredicateFailure> {
         match self {
-            Expression::BinaryOp(op) => op.eval(target),
-            Expression::Not(expr) => expr.eval(target).map(|value| !value),
-            Expression::Just(pred) => pred.eval(target),
+            Expression::BinaryOp(op) => op.eval(target, sink),
+            Expression::Not(expr) => expr.eval(target, sink).map(|value| !value),
+            Expression::Just(pred) => pred.eval(target, sink),
         }
     }
 

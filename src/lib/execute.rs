@@ -17,22 +17,27 @@
 use std::path::PathBuf;
 
 use super::ast::{BinaryOperation, BinaryOperationKind, Expression, Predicate, Target};
+use super::effects::EffectSink;
 use super::errors::PredicateFailure;
 use super::metadata::{DirectoryVisitType, FoundFile, VisitType};
 use super::options::Options;
 
 impl Predicate for BinaryOperation {
-    fn eval(&self, target: &Target) -> Result<bool, PredicateFailure> {
+    fn eval(
+        &self,
+        target: &Target,
+        sink: &mut Box<dyn EffectSink>,
+    ) -> Result<bool, PredicateFailure> {
         match self.kind() {
             BinaryOperationKind::Comma => self
                 .children()
-                .try_fold(true, |_, action| action.eval(target)),
+                .try_fold(true, |_, action| action.eval(target, sink)),
             BinaryOperationKind::And => self
                 .children()
-                .try_fold(true, |acc, action| Ok(acc && action.eval(target)?)),
+                .try_fold(true, |acc, action| Ok(acc && action.eval(target, sink)?)),
             BinaryOperationKind::Or => self
                 .children()
-                .try_fold(true, |acc, action| Ok(acc || action.eval(target)?)),
+                .try_fold(true, |acc, action| Ok(acc || action.eval(target, sink)?)),
         }
     }
 
@@ -70,6 +75,7 @@ pub fn visit(
     prog: &Expression,
     entry: &FoundFile,
     options: &Options,
+    sink: &mut Box<dyn EffectSink>,
 ) -> Result<VisitOutcome, PredicateFailure> {
     if entry.depth < options.mindepth() {
         // Don't set the skip option, because we still want to visit
@@ -90,7 +96,7 @@ pub fn visit(
                 return Ok(VisitOutcome::Continue);
             }
             DirectoryVisitType::Preorder | DirectoryVisitType::Postorder => {
-                prog.eval(entry)?;
+                prog.eval(entry, sink)?;
             }
             DirectoryVisitType::Unreadable => {
                 if options.depth_first() {
@@ -98,16 +104,20 @@ pub fn visit(
                     // visit an unreadable directory in postorder.
                     return Ok(VisitOutcome::Continue);
                 } else {
-                    eprintln!(
-                        "error: cannot visit children of {} because it is unreadable",
-                        entry.reported_path.display()
+                    sink.emit_encoded_errors(
+                        1,
+                        &[
+                            b"error: cannot visit children of ",
+                            entry.reported_path.as_os_str().as_encoded_bytes(),
+                            b" because it is unreadable",
+                        ],
                     );
                     return Ok(VisitOutcome::Continue);
                 }
             }
         },
         _ => {
-            prog.eval(entry)?;
+            prog.eval(entry, sink)?;
         }
     }
     if let Some(limit) = options.maxdepth() {

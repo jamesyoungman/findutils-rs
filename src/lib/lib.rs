@@ -15,6 +15,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod ast;
+mod effects;
 mod errors;
 mod execute;
 mod metadata;
@@ -24,8 +25,10 @@ mod platform;
 mod predicate;
 mod source;
 
+pub use ast::Expression;
+pub use effects::EffectSink;
 pub use errors::UsageError;
 pub use execute::{visit, VisitOutcome};
-pub use options::{parse_options, NameResolutionMode};
+pub use options::{parse_options, NameResolutionMode, Options};
 pub use parser::parse_program;
 pub use source::{new_source, Source};
